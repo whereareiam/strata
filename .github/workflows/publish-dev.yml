@@ -1,0 +1,47 @@
+name: Publish development build
+on:
+  workflow_dispatch:
+    inputs:
+      configura-version:
+        description: Published Configura version to depend on
+        required: true
+        type: string
+      dialectica-version:
+        description: Published Dialectica version to depend on
+        required: true
+        type: string
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: publish-dev-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CONFIGURA_VERSION: ${{ inputs.configura-version }}
+      DIALECTICA_VERSION: ${{ inputs.dialectica-version }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Verify dependency versions
+        run: |
+          for value in "$CONFIGURA_VERSION" "$DIALECTICA_VERSION"; do
+            [[ "$value" =~ ^[A-Za-z0-9][A-Za-z0-9._-]+$ ]] || { echo "Set explicit published dependency versions before publishing Strata." >&2; exit 1; }
+          done
+      - name: Resolve development version
+        run: echo "VERSION=dev-${GITHUB_SHA::12}-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
+      - name: Build and verify
+        run: ./gradlew --no-daemon clean test build -PconfiguraVersion="$CONFIGURA_VERSION" -PdialecticaVersion="$DIALECTICA_VERSION"
+      - name: Publish packages
+        uses: whereareiam/devops/actions/registry/maven-publish@v2
+        with:
+          visibility: public
+          repository: packages
+          command: ./gradlew --no-daemon publish -PconfiguraVersion="$CONFIGURA_VERSION" -PdialecticaVersion="$DIALECTICA_VERSION"
