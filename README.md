@@ -12,18 +12,19 @@ repositories {
 }
 
 dependencies {
-    implementation("me.whereareiam:strata-common:2.0.0")
+    implementation("me.whereareiam:strata:2.0.0")
 
     // One adapter per kind of thing you migrate:
-    implementation("me.whereareiam:strata-adapter-jdbc:2.0.0")       // a database, plain JDBC
-    implementation("me.whereareiam:strata-adapter-jdbi:2.0.0")       // a database, through your Jdbi
+    implementation("me.whereareiam:strata-adapter-database:2.0.0")       // a database
+    implementation("me.whereareiam:strata-adapter-database-jdbi:2.0.0")  // ... reached through your Jdbi
     implementation("me.whereareiam:strata-adapter-configura:2.0.0")  // config files, through Configura
 
     testImplementation("me.whereareiam:strata-adapter-memory:2.0.0") // an in-memory target for tests
 }
 ```
 
-Bring your own JDBC driver. `strata-api` and `strata-common` have no dependencies.
+Bring your own JDBC driver. `strata` itself has no dependencies; each adapter brings the library
+it is for.
 
 ## Upgrade a database and a config directory
 
@@ -34,19 +35,19 @@ database, or your files in a config directory. Version `n` is the state after mi
 import me.whereareiam.configura.Config;
 import me.whereareiam.configura.Configura;
 import me.whereareiam.strata.MigrationStream;
+import me.whereareiam.strata.Strata;
 import me.whereareiam.strata.adapter.configura.ConfigContext;
 import me.whereareiam.strata.adapter.configura.ConfiguraTarget;
 import me.whereareiam.strata.adapter.configura.StrataFeature;
-import me.whereareiam.strata.adapter.jdbc.JdbcContext;
-import me.whereareiam.strata.adapter.jdbc.JdbcTarget;
-import me.whereareiam.strata.common.Strata;
+import me.whereareiam.strata.adapter.database.DatabaseContext;
+import me.whereareiam.strata.adapter.database.DatabaseTarget;
 import me.whereareiam.strata.model.MigrationReport;
 
 import java.util.List;
 
-MigrationStream<JdbcContext> database = MigrationStream.<JdbcContext>builder()
+MigrationStream<DatabaseContext> database = MigrationStream.<DatabaseContext>builder()
         .id("my-plugin/database")
-        .target(new JdbcTarget(dataSource))
+        .target(new DatabaseTarget(dataSource))
         .baseline((db, latest) -> db.tableExists("accounts") ? 0 : latest)
         .migration(1, "add-last-login", db -> db.execute("ALTER TABLE accounts ADD COLUMN last_login BIGINT"))
         .migration(2, "lowercase-names", db -> db.update("UPDATE accounts SET name = LOWER(name)"))
@@ -102,7 +103,7 @@ src/main/resources/strata/my-plugin/database/
 ```
 
 ```java
-import me.whereareiam.strata.adapter.jdbc.sql.SqlMigration;
+import me.whereareiam.strata.adapter.database.SqlMigration;
 
 .migrations(SqlMigration.discover(getClass().getClassLoader(), "strata/my-plugin/database"))
 ```
@@ -180,7 +181,7 @@ newer build, or is older than the oldest migration the build still ships.
 
 Two instances starting at once do not migrate twice. PostgreSQL, MySQL and MariaDB are locked for
 the duration of the upgrade and the second instance waits, one minute by default
-(`new JdbcTarget(dataSource, timeout)`). A config directory can be open in one process only; a
+(`new DatabaseTarget(connector, timeout)`). A config directory can be open in one process only; a
 second one fails immediately. H2 and SQLite are treated as owned by a single process.
 
 ## What Strata stores
@@ -194,20 +195,26 @@ second one fails immediately. H2 and SQLite are treated as owned by a single pro
 
 ## Jdbi
 
-`JdbiTarget` opens its handle from your `Jdbi`, so migrations see the plugins, mappers and
-arguments you registered, including Dialectica's `DialectPlugin`.
+`new DatabaseTarget(dataSource)` reaches the database through plain JDBC. If your application uses
+Jdbi, hand the target a `JdbiConnector` instead:
 
 ```java
-MigrationStream<JdbiContext> database = MigrationStream.<JdbiContext>builder()
+import me.whereareiam.strata.adapter.database.jdbi.JdbiConnector;
+
+MigrationStream<DatabaseContext> database = MigrationStream.<DatabaseContext>builder()
         .id("my-plugin/database")
-        .target(new JdbiTarget(jdbi))
-        .migration(1, "lowercase-names", db -> db.getHandle().execute("UPDATE accounts SET name = LOWER(name)"))
+        .target(new DatabaseTarget(new JdbiConnector(jdbi)))
         .migrations(SqlMigration.discover(loader, "strata/my-plugin/database"))
+        .migration(3, "lowercase-names", db -> jdbi.useHandle(handle ->
+                handle.execute("UPDATE accounts SET name = LOWER(name)")))
         .build();
 ```
 
-A `JdbiContext` is a `JdbcContext` with a handle, so SQL scripts and migrations written for plain
-JDBC work unchanged. Do not open transactions on the handle or close it.
+While a stream is upgraded, your `Jdbi` finds the migration's handle for the current thread. Inside
+a migration you therefore use your own `jdbi` as everywhere else, with its plugins, mappers and
+DAOs, including Dialectica's `DialectPlugin`, and everything runs on the migration's connection and
+inside its transaction. A `useTransaction` in a migration joins that transaction and does not
+commit it. Stay on the thread the migration was called on.
 
 ## Testing migrations
 
@@ -223,11 +230,14 @@ assertEquals(List.of(1, 2), target.history("my-plugin/data").stream().map(Applie
 
 ## Migrating something else
 
-Implement `MigrationTarget<C>` and `MigrationSession<C>` from `strata-api`. A session holds the
+Implement `MigrationTarget<C>` and `MigrationSession<C>`, depending on `strata-api` only. A session holds the
 target's lock, reads the version a stream has reached, and runs an action and records its version as
 one unit.
-`MemoryTarget` is the smallest example; `JdbcSession` can be reused by libraries built on JDBC, as
-the Jdbi adapter does.
+`MemoryTarget` is the smallest example.
+
+To reach a database through another library, implement `DatabaseConnector` from
+`strata-adapter-database-api`, as `JdbiConnector` does: it opens the connection migrations run on
+and releases it afterwards.
 
 ## Building
 

@@ -3,11 +3,9 @@ package me.whereareiam.strata.adapter.configura;
 import com.fasterxml.jackson.databind.JsonNode;
 import me.whereareiam.configura.Config;
 import me.whereareiam.configura.Configura;
+import me.whereareiam.strata.MigrationAction;
 import me.whereareiam.strata.MigrationSession;
-import me.whereareiam.strata.MigrationStream;
-import me.whereareiam.strata.common.Strata;
-import me.whereareiam.strata.exception.MigrationException;
-import me.whereareiam.strata.exception.MigrationFailedException;
+import me.whereareiam.strata.model.AppliedMigration;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -15,23 +13,29 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.Comparator;
-import java.util.List;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ConfiguraTargetTest {
+	private static final String STREAM = "plugin/config";
 	private static final String SETTINGS = """
 			name: lobby
 			timeout: 30000
 			routing:
 			  mode: balanced
 			""";
+	private static final MigrationAction<ConfigContext> SPLIT_ROUTING =
+			files -> files.move("settings.yml", "/routing", "routing.yml", "/routing");
+	private static final MigrationAction<ConfigContext> TIMEOUT_IN_SECONDS = files -> {
+		var settings = files.document("settings.yml");
+		settings.put("timeout", settings.path("timeout").asInt() / 1000);
+	};
 
 	private final Configura configura = Config.builder()
 			.feature(new StrataFeature())
@@ -50,44 +54,49 @@ class ConfiguraTargetTest {
 	@Test
 	void changesSeveralFilesAndWritesTheVersionIntoItsFile() throws Exception {
 		Files.writeString(directory.resolve("settings.yml"), SETTINGS);
-		MigrationStream<ConfigContext> stream = upgrade().build();
 
-		new Strata(List.of(stream)).migrate();
+		apply(1, SPLIT_ROUTING);
+		apply(2, TIMEOUT_IN_SECONDS);
 
-		assertEquals(2, settings().path("_version").asInt());
+		assertEquals(2, version());
 		assertEquals("_version", settings().fieldNames().next());
 		assertEquals(30, settings().path("timeout").asInt());
 		assertFalse(settings().has("routing"));
 		assertEquals("balanced", configura.readNode(directory.resolve("routing.yml")).at("/routing/mode").asText());
-		assertTrue(new Strata(List.of(stream)).migrate().isEmpty());
 	}
 
 	@Test
-	void runsNothingAgainAfterItsWorkingFolderWasDeleted() throws Exception {
+	void knowsItsVersionAfterItsWorkingFolderWasDeleted() throws Exception {
 		Files.writeString(directory.resolve("settings.yml"), SETTINGS);
-		new Strata(List.of(upgrade().build())).migrate();
+		apply(1, SPLIT_ROUTING);
 
 		deleteTree(directory.resolve(".strata"));
 
-		assertTrue(new Strata(List.of(upgrade().build())).migrate().isEmpty());
-		assertEquals(30, settings().path("timeout").asInt());
+		assertEquals(1, version());
 	}
 
 	@Test
-	void continuesFromTheVersionOfAFileBroughtFromElsewhere() throws Exception {
-		Files.writeString(directory.resolve("settings.yml"), "_version: 1\ntimeout: 30000\n");
+	void takesTheVersionOfAFileBroughtFromElsewhere() throws Exception {
+		Files.writeString(directory.resolve("settings.yml"), "_version: 4\ntimeout: 30\n");
 
-		new Strata(List.of(upgrade().build())).migrate();
+		assertEquals(4, version());
+	}
 
-		assertEquals(2, settings().path("_version").asInt());
-		assertEquals(30, settings().path("timeout").asInt());
+	@Test
+	void isAtVersionZeroWithoutAFileOrWithoutTheKey() throws Exception {
+		assertEquals(0, version());
+
+		Files.writeString(directory.resolve("settings.yml"), SETTINGS);
+
+		assertEquals(0, version());
 	}
 
 	@Test
 	void keepsTheFilesAsTheyWereBeforeAMigration() throws Exception {
 		Files.writeString(directory.resolve("settings.yml"), SETTINGS);
 
-		new Strata(List.of(upgrade().build())).migrate();
+		apply(1, SPLIT_ROUTING);
+		apply(2, TIMEOUT_IN_SECONDS);
 
 		Path backup = directory.resolve(".strata/backup/plugin.config");
 		assertEquals(SETTINGS, Files.readString(backup.resolve("v1/settings.yml")));
@@ -98,33 +107,26 @@ class ConfiguraTargetTest {
 	@Test
 	void changesNothingWhenAMigrationFails() throws Exception {
 		Files.writeString(directory.resolve("settings.yml"), SETTINGS);
-		MigrationStream<ConfigContext> broken = stream()
-				.migration(1, "broken", files -> {
-					files.document("settings.yml").put("name", "hub");
-					files.delete("settings.yml");
-					throw new IllegalStateException("broken");
-				})
-				.build();
 
-		assertThrows(MigrationFailedException.class, () -> new Strata(List.of(broken)).migrate());
+		assertThrows(IllegalStateException.class, () -> apply(1, files -> {
+			files.document("settings.yml").put("name", "hub");
+			files.delete("settings.yml");
+			throw new IllegalStateException("broken");
+		}));
 
 		assertEquals(SETTINGS, Files.readString(directory.resolve("settings.yml")));
+		assertEquals(0, version());
 	}
 
 	@Test
-	void stampsANewDirectoryWithAFileConfiguraCompletes() throws Exception {
-		MigrationStream<ConfigContext> stream = upgrade()
-				.baseline((files, latest) -> files.exists("settings.yml") ? 0 : latest)
-				.build();
+	void recordsAVersionInANewDirectoryWithAFileConfiguraCompletes() throws Exception {
+		apply(2, files -> {});
 
-		assertTrue(new Strata(List.of(stream)).migrate().isEmpty());
 		Settings settings = configura.update(directory.resolve("settings.yml"), Settings.class);
 
 		assertEquals("lobby", settings.name);
-		assertEquals(2, settings().path("_version").asInt());
 		assertEquals("lobby", settings().path("name").asText());
-		assertFalse(Files.exists(directory.resolve("routing.yml")));
-		assertTrue(new Strata(List.of(stream)).migrate().isEmpty());
+		assertEquals(2, version());
 	}
 
 	@Test
@@ -135,24 +137,18 @@ class ConfiguraTargetTest {
 		Files.writeString(directory.resolve(".strata/journal/write/routing.yml"), "routing:\n  mode: balanced\n");
 		Files.writeString(directory.resolve(".strata/journal/delete"), "");
 
-		assertTrue(new Strata(List.of(upgrade().build())).migrate().isEmpty());
-
+		assertEquals(2, version());
 		assertEquals(30, settings().path("timeout").asInt());
 		assertTrue(Files.exists(directory.resolve("routing.yml")));
 	}
 
 	@Test
-	void carriesTheVersionOfOneStreamOnly() {
-		MigrationStream<ConfigContext> other = MigrationStream.<ConfigContext>builder()
-				.id("plugin/other")
-				.target(target)
-				.migration(1, "anything", files -> {})
-				.build();
+	void carriesTheVersionOfOneStreamOnly() throws Exception {
+		apply(1, files -> {});
 
-		MigrationException failure = assertThrows(MigrationException.class, () -> new Strata(List.of(upgrade().build(), other)).migrate());
-
-		assertEquals("plugin/other", failure.getStream());
-		assertInstanceOf(IllegalStateException.class, failure.getCause());
+		try (MigrationSession<ConfigContext> session = target.open()) {
+			assertThrows(IllegalStateException.class, () -> session.version("plugin/other"));
+		}
 	}
 
 	@Test
@@ -177,19 +173,16 @@ class ConfiguraTargetTest {
 		target.open().close();
 	}
 
-	private MigrationStream.Builder<ConfigContext> upgrade() {
-		return stream()
-				.migration(1, "split-routing", files -> files.move("settings.yml", "/routing", "routing.yml", "/routing"))
-				.migration(2, "timeout-in-seconds", files -> {
-					var settings = files.document("settings.yml");
-					settings.put("timeout", settings.path("timeout").asInt() / 1000);
-				});
+	private void apply(int version, MigrationAction<ConfigContext> action) throws Exception {
+		try (MigrationSession<ConfigContext> session = target.open()) {
+			session.apply(STREAM, action, new AppliedMigration(version, "migration-" + version, Instant.EPOCH));
+		}
 	}
 
-	private MigrationStream.Builder<ConfigContext> stream() {
-		return MigrationStream.<ConfigContext>builder()
-				.id("plugin/config")
-				.target(target);
+	private int version() throws Exception {
+		try (MigrationSession<ConfigContext> session = target.open()) {
+			return session.version(STREAM);
+		}
 	}
 
 	private JsonNode settings() {

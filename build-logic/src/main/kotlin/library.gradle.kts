@@ -47,8 +47,9 @@ publishing {
     publications {
         create<MavenPublication>("mavenJava") {
             from(components["java"])
-            // Adapters live in the strata-adapter group and are published as strata-adapter-<technology>.
-            artifactId = if (project.name.startsWith("adapter-")) "strata-${project.name}" else project.name
+            // Adapters live in the strata-adapter group: adapter-database is published as
+            // strata-adapter-database, its member database-jdbi as strata-adapter-database-jdbi.
+            artifactId = if (project.path.startsWith(":strata-adapter:")) "strata-adapter-${project.name.removePrefix("adapter-")}" else project.name
             pom {
                 name.set(artifactId)
                 description.set("Installation migrations for configuration files and databases")
