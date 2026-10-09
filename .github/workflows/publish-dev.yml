@@ -1,11 +1,6 @@
 name: Publish development build
 on:
   workflow_dispatch:
-    inputs:
-      configura-version:
-        description: Published Configura version to depend on
-        required: true
-        type: string
 permissions:
   contents: read
   id-token: write
@@ -16,8 +11,6 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      CONFIGURA_VERSION: ${{ inputs.configura-version }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-java@v5
@@ -25,16 +18,13 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
-      - name: Verify dependency version
-        run: |
-          [[ "$CONFIGURA_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]+$ ]] || { echo "Set an explicit published Configura version before publishing Strata." >&2; exit 1; }
       - name: Resolve development version
         run: echo "VERSION=dev-${GITHUB_SHA::12}-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
       - name: Build and verify
-        run: ./gradlew --no-daemon clean test build -PconfiguraVersion="$CONFIGURA_VERSION"
+        run: ./gradlew --no-daemon clean test build
       - name: Publish packages
         uses: whereareiam/devops/actions/registry/maven-publish@v2
         with:
           visibility: public
           repository: packages
-          command: ./gradlew --no-daemon publish -PconfiguraVersion="$CONFIGURA_VERSION"
+          command: ./gradlew --no-daemon publish

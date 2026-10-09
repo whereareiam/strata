@@ -236,6 +236,9 @@ the Jdbi adapter does.
 ./gradlew test -PintegrationTests=true   # adds the PostgreSQL and MariaDB tests, needs Docker
 ```
 
-The Configura adapter is built against Configura 2.0.0 and needs 2.0.0 or newer, the first release
-in which a feature can reserve keys. Pass `-PconfiguraVersion=<version>` for another release, or
-`-Pstrata.siblings=true` to build against a checkout at `../Configura`.
+The Configura adapter needs Configura 2.0.0 or newer, the first release in which a feature can
+reserve keys. The version it is built against is set in `gradle/libs.versions.toml`.
+
+To build against a Configura change that is not released yet, run `./gradlew publishToMavenLocal`
+in the Configura checkout, which publishes it as version `dev`, and set `configura = "dev"` in
+`gradle/libs.versions.toml` while you work.

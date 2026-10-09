@@ -12,8 +12,6 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      CONFIGURA_VERSION: ${{ vars.STRATA_CONFIGURA_VERSION }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-java@v5
@@ -21,9 +19,6 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
-      - name: Verify dependency version
-        run: |
-          [[ "$CONFIGURA_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]+$ ]] || { echo "Set an explicit published Configura version before publishing Strata." >&2; exit 1; }
       - name: Resolve release version
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
@@ -32,13 +27,13 @@ jobs:
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][A-Za-z0-9.-]+)?$ ]] || { echo "Expected a semantic release tag" >&2; exit 1; }
           echo "VERSION=$version" >> "$GITHUB_ENV"
       - name: Build and verify all database families
-        run: ./gradlew --no-daemon clean test build -PintegrationTests=true -PconfiguraVersion="$CONFIGURA_VERSION"
+        run: ./gradlew --no-daemon clean test build -PintegrationTests=true
       - name: Publish packages
         uses: whereareiam/devops/actions/registry/maven-publish@v2
         with:
           visibility: public
           repository: packages
-          command: ./gradlew --no-daemon publish -PconfiguraVersion="$CONFIGURA_VERSION"
+          command: ./gradlew --no-daemon publish
       - name: Attach release artifacts
         env:
           GH_TOKEN: ${{ github.token }}
