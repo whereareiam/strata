@@ -2,7 +2,6 @@ package me.whereareiam.strata.common;
 
 import me.whereareiam.strata.Migration;
 import me.whereareiam.strata.MigrationStream;
-import me.whereareiam.strata.adapter.memory.MemoryTarget;
 import me.whereareiam.strata.exception.MigrationVersionException;
 import org.junit.jupiter.api.Test;
 
@@ -52,7 +51,9 @@ class MigrationPlanTest {
 	private static MigrationStream<Object> stream(int first, int last) {
 		MigrationStream.Builder<Object> builder = MigrationStream.builder()
 				.id("plugin/data")
-				.target(new MemoryTarget<>(new Object()));
+				.target(() -> {
+					throw new UnsupportedOperationException();
+				});
 		for (int version = first; version <= last; version++)
 			builder.migration(version, "migration-" + version, context -> {});
 
