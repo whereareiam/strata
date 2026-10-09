@@ -11,22 +11,12 @@ jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    defaults:
-      run:
-        working-directory: Strata
     steps:
       - uses: actions/checkout@v5
-        with:
-          path: Strata
-      - uses: actions/checkout@v5
-        with:
-          repository: whereareiam/configura
-          ref: dev
-          path: Configura
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
       - name: Compile and run fast tests
-        run: ./gradlew --no-daemon -Pstrata.siblings=true test
+        run: ./gradlew --no-daemon test

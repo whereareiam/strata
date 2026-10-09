@@ -11,6 +11,8 @@ version = providers.environmentVariable("VERSION").orElse("dev").get()
 repositories {
     mavenCentral()
     maven("https://registry.whereareiam.me/maven/packages")
+    // Last, so it only answers for versions the registry does not have, such as a locally published "dev".
+    mavenLocal()
 }
 
 java {
