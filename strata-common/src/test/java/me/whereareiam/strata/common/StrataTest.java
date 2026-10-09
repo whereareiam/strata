@@ -1,107 +1,161 @@
 package me.whereareiam.strata.common;
 
-import me.whereareiam.strata.*;
-import me.whereareiam.strata.testkit.MemoryIntegration;
+import me.whereareiam.strata.Migration;
+import me.whereareiam.strata.MigrationStream;
+import me.whereareiam.strata.adapter.memory.MemoryTarget;
+import me.whereareiam.strata.exception.MigrationException;
+import me.whereareiam.strata.exception.MigrationFailedException;
+import me.whereareiam.strata.exception.MigrationVersionException;
+import me.whereareiam.strata.model.AppliedMigration;
+import me.whereareiam.strata.model.MigrationReport;
 import org.junit.jupiter.api.Test;
-import java.util.*;
-import static org.junit.jupiter.api.Assertions.*;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class StrataTest {
-	private final MemoryIntegration<List<String>> integration = new MemoryIntegration<>("memory", new ArrayList<>(), ArrayList::new);
-	private Migration<List<String>> migration(int from, int to, String fingerprint) {
-		return new Migration<>("step-" + to, from, to, fingerprint, list -> list.add("v" + to));
-	}
-	private MigrationStream<List<String>> stream(String id, int target, List<Migration<List<String>>> migrations, Map<String, Integer> dependencies) {
-		return new MigrationStream<>(id, integration, target, migrations, dependencies, list -> 0, null);
-	}
-	private Strata strata(MigrationStream<?>... streams) { return new Strata(List.of(streams), Map.of("platform", "velocity")); }
+	private final MemoryTarget<List<String>> target = new MemoryTarget<>(new ArrayList<>());
 
-	@Test void preparesWithoutPublishingAndRunsOnce() throws Exception {
-		var runner = strata(stream("config", 2, List.of(migration(1, 2, "b"), migration(0, 1, "a")), Map.of()));
-		assertEquals(3, runner.inspect().size());
-		assertTrue(integration.snapshot().isEmpty());
-		try (var abandoned = runner.prepare()) { assertTrue(integration.snapshot().isEmpty()); }
-		runner.execute(); runner.execute();
-		assertEquals(List.of("v1", "v2"), integration.snapshot());
-		assertTrue(runner.inspect().isEmpty());
+	@Test
+	void runsPendingMigrationsInVersionOrder() {
+		MigrationReport report = new Strata(List.of(stream("plugin/data", 2).build())).migrate();
+
+		assertEquals(List.of("plugin/data 1", "plugin/data 2"), target.getState());
+		assertEquals(List.of(1, 2), versions(report.getApplied().get("plugin/data")));
+		assertEquals(List.of(1, 2), versions(target.history("plugin/data")));
 	}
-	@Test void checksHistoryBeforeAnyNewAction() throws Exception {
-		strata(stream("config", 1, List.of(migration(0, 1, "a")), Map.of())).execute();
-		assertThrows(IllegalStateException.class, () -> strata(stream("config", 2,
-				List.of(migration(0, 1, "changed"), migration(1, 2, "b")), Map.of())).execute());
-		assertEquals(List.of("v1"), integration.snapshot());
+
+	@Test
+	void runsNothingTwice() {
+		new Strata(List.of(stream("plugin/data", 2).build())).migrate();
+		MigrationReport report = new Strata(List.of(stream("plugin/data", 3).build())).migrate();
+
+		assertEquals(List.of("plugin/data 1", "plugin/data 2", "plugin/data 3"), target.getState());
+		assertEquals(List.of(3), versions(report.getApplied().get("plugin/data")));
+		assertTrue(new Strata(List.of(stream("plugin/data", 3).build())).migrate().isEmpty());
 	}
-	@Test void rejectsMissingHistoryDeclarationsAndDowngrades() throws Exception {
-		strata(stream("config", 1, List.of(migration(0, 1, "a")), Map.of())).execute();
-		assertThrows(IllegalStateException.class, () -> strata(stream("config", 1, List.of(), Map.of())).execute());
-		assertThrows(IllegalStateException.class, () -> strata(stream("config", 0, List.of(), Map.of())).execute());
+
+	@Test
+	void upgradesStreamsInRegistrationOrder() {
+		new Strata(List.of(stream("plugin/second", 1).build(), stream("plugin/first", 1).build())).migrate();
+
+		assertEquals(List.of("plugin/second 1", "plugin/first 1"), target.getState());
 	}
-	@Test void rejectsGapsAndDuplicateDeclarations() {
-		assertThrows(IllegalStateException.class, () -> strata(stream("config", 2, List.of(migration(1, 2, "b")), Map.of())).prepare());
-		assertThrows(IllegalArgumentException.class, () -> stream("config", 2, List.of(migration(0, 1, "a"), migration(0, 2, "b")), Map.of()));
+
+	@Test
+	void stampsAnInstallationTheBaselineCallsCurrent() {
+		MigrationStream<List<String>> stream = stream("plugin/data", 3)
+				.baseline((state, latest) -> latest)
+				.build();
+
+		assertTrue(new Strata(List.of(stream)).migrate().isEmpty());
+		assertTrue(target.getState().isEmpty());
+		assertEquals(List.of(3), versions(target.history("plugin/data")));
 	}
-	@Test void resolvesDependenciesAndRejectsCycles() throws Exception {
-		var first = stream("first", 1, List.of(new Migration<>("first", 0, 1, "1", list -> list.add("first"))), Map.of());
-		var second = stream("second", 1, List.of(new Migration<>("second", 0, 1, "1", list -> {
-			assertEquals(List.of("first"), list); list.add("second");
-		})), Map.of("first", 1));
-		strata(second, first).execute();
-		assertEquals(List.of("first", "second"), integration.snapshot());
-		assertThrows(IllegalArgumentException.class, () -> strata(stream("a", 0, List.of(), Map.of("b", 0)),
-				stream("b", 0, List.of(), Map.of("a", 0))).inspect());
+
+	@Test
+	void continuesFromTheVersionTheBaselineFinds() {
+		MigrationStream<List<String>> stream = stream("plugin/data", 3)
+				.baseline((state, latest) -> 1)
+				.build();
+
+		new Strata(List.of(stream)).migrate();
+
+		assertEquals(List.of("plugin/data 2", "plugin/data 3"), target.getState());
+		assertEquals(List.of(1, 2, 3), versions(target.history("plugin/data")));
 	}
-	@Test void excludesPlatformsWithoutConsumingTheirHistory() throws Exception {
-		var bungee = new MigrationStream<>("bungee", integration, 1, List.of(migration(0, 1, "a")), Map.of(), list -> 0,
-				env -> env.get("platform").equals("bungeecord"));
-		strata(bungee).execute();
-		assertTrue(integration.snapshot().isEmpty());
-		new Strata(List.of(bungee), Map.of("platform", "bungeecord")).execute();
-		assertEquals(List.of("v1"), integration.snapshot());
+
+	@Test
+	void asksTheBaselineOnlyWithoutHistory() {
+		new Strata(List.of(stream("plugin/data", 1).build())).migrate();
+		MigrationStream<List<String>> stream = stream("plugin/data", 2)
+				.baseline((state, latest) -> latest)
+				.build();
+
+		new Strata(List.of(stream)).migrate();
+
+		assertEquals(List.of("plugin/data 1", "plugin/data 2"), target.getState());
 	}
-	@Test void missingPlatformDependencyFailsBeforeOpeningResources() {
-		assertThrows(IllegalArgumentException.class, () -> strata(stream("velocity", 0, List.of(), Map.of("missing", 1))).inspect());
+
+	@Test
+	void rejectsABaselineOutsideTheDeclaredVersions() {
+		MigrationStream<List<String>> stream = stream("plugin/data", 2)
+				.baseline((state, latest) -> latest + 1)
+				.build();
+
+		MigrationException failure = assertThrows(MigrationException.class, () -> new Strata(List.of(stream)).migrate());
+		assertInstanceOf(IllegalStateException.class, failure.getCause());
 	}
-	@Test void unknownLegacyLayoutDoesNotWriteHistory() throws Exception {
-		var unknown = new MigrationStream<>("legacy", integration, 1, List.of(migration(0, 1, "a")), Map.of(), list -> {
-			throw new IllegalStateException("Ambiguous layout");
-		}, null);
-		assertThrows(IllegalStateException.class, () -> strata(unknown).execute());
-		try (var session = integration.open(false)) { assertNull(session.history("legacy")); }
+
+	@Test
+	void stopsAtAFailedMigrationAndKeepsTheEarlierOnes() {
+		MigrationStream<List<String>> stream = stream("plugin/data", 1)
+				.migration(2, "broken", state -> {
+					throw new IllegalStateException("broken");
+				})
+				.migration(3, "unreached", state -> state.add("unreached"))
+				.build();
+
+		MigrationFailedException failure = assertThrows(MigrationFailedException.class, () -> new Strata(List.of(stream)).migrate());
+
+		assertEquals("plugin/data", failure.getStream());
+		assertEquals(2, failure.getVersion());
+		assertEquals("broken", failure.getName());
+		assertInstanceOf(IllegalStateException.class, failure.getCause());
+		assertEquals(List.of("plugin/data 1"), target.getState());
+		assertEquals(List.of(1), versions(target.history("plugin/data")));
 	}
-	@Test void adoptsVerifiedLegacyBaselineWithoutReplayingIt() throws Exception {
-		var legacy = new MigrationStream<>("legacy", integration, 3, List.of(migration(2, 3, "3")), Map.of(), list -> 2, null);
-		strata(legacy).execute();
-		assertEquals(List.of("v3"), integration.snapshot());
-		try (var session = integration.open(false)) { assertEquals(2, session.history("legacy").getBaseline()); }
+
+	@Test
+	void refusesAnInstallationWrittenByANewerBuild() {
+		new Strata(List.of(stream("plugin/data", 3).build())).migrate();
+
+		assertThrows(MigrationVersionException.class, () -> new Strata(List.of(stream("plugin/data", 2).build())).migrate());
 	}
-	@Test void failedPreparationDoesNotPublishEarlierStreams() {
-		var fail = new Migration<List<String>>("fail", 0, 1, "1", list -> { throw new IllegalStateException("injected"); });
-		assertThrows(IllegalStateException.class, () -> strata(stream("a", 1, List.of(migration(0, 1, "a")), Map.of()),
-				stream("b", 1, List.of(fail), Map.of())).execute());
-		assertTrue(integration.snapshot().isEmpty());
+
+	@Test
+	void listsPendingMigrationsWithoutRunningThem() {
+		new Strata(List.of(stream("plugin/data", 1).build())).migrate();
+		MigrationStream<List<String>> fresh = stream("plugin/fresh", 2)
+				.baseline((state, latest) -> latest)
+				.build();
+
+		Map<String, List<Migration<?>>> pending = new Strata(List.of(stream("plugin/data", 3).build(), fresh)).pending();
+
+		assertEquals(List.of("plugin/data"), List.copyOf(pending.keySet()));
+		assertEquals(List.of(2, 3), pending.get("plugin/data").stream().map(Migration::getVersion).toList());
+		assertEquals(List.of("plugin/data 1"), target.getState());
+		assertTrue(target.history("plugin/fresh").isEmpty());
 	}
-	@Test void preparedPlanIsSingleUse() throws Exception {
-		try (var prepared = strata(stream("a", 1, List.of(migration(0, 1, "a")), Map.of())).prepare()) {
-			prepared.commit();
-			assertThrows(IllegalStateException.class, prepared::commit);
+
+	@Test
+	void rejectsStreamsSharingAnId() {
+		List<MigrationStream<?>> streams = List.of(stream("plugin/data", 1).build(), stream("plugin/data", 2).build());
+
+		assertThrows(IllegalArgumentException.class, () -> new Strata(streams));
+	}
+
+	private MigrationStream.Builder<List<String>> stream(String id, int latest) {
+		MigrationStream.Builder<List<String>> builder = MigrationStream.<List<String>>builder()
+				.id(id)
+				.target(target);
+		for (int version = 1; version <= latest; version++) {
+			String mark = id + " " + version;
+			builder.migration(version, "migration-" + version, state -> state.add(mark));
 		}
-	}
-	@Test void historyRoundTripsAndRejectsCorruption() {
-		var history = new MigrationHistory(3, List.of(new AppliedMigration("tab\tline\n", 3, 5, "abc")));
-		assertEquals(history.getApplied(), HistoryCodec.decode(HistoryCodec.encode(history)).getApplied());
-		assertThrows(IllegalArgumentException.class, () -> HistoryCodec.decode("garbage".getBytes()));
-		assertThrows(IllegalArgumentException.class, () -> new MigrationHistory(3, List.of(new AppliedMigration("bad", 1, 2, "x"))));
-	}
-	@Test void finalVerificationBlocksStartupAndRepeatsWithoutReplayingMigrations() throws Exception {
-		var fail = new java.util.concurrent.atomic.AtomicBoolean(true);
-		var calls = new java.util.concurrent.atomic.AtomicInteger();
-		var runner = new Strata(List.of(stream("config", 1, List.of(migration(0, 1, "1")), Map.of())), Map.of(),
-				List.of(() -> { calls.incrementAndGet(); if (fail.get()) throw new IllegalStateException("invalid installation"); }));
-		assertThrows(IllegalStateException.class, runner::execute);
-		assertEquals(List.of("v1"), integration.snapshot());
-		fail.set(false); runner.execute();
-		assertEquals(2, calls.get());
-		assertEquals(List.of("v1"), integration.snapshot());
+
+		return builder;
 	}
 
+	private static List<Integer> versions(List<AppliedMigration> entries) {
+		return entries.stream()
+				.map(AppliedMigration::getVersion)
+				.toList();
+	}
 }

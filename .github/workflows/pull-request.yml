@@ -23,11 +23,6 @@ jobs:
           repository: whereareiam/configura
           ref: dev
           path: Configura
-      - uses: actions/checkout@v5
-        with:
-          repository: whereareiam/dialectica
-          ref: dev
-          path: Dialectica
       - uses: actions/setup-java@v5
         with:
           distribution: temurin

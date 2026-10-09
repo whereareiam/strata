@@ -3,22 +3,20 @@ lombok = "1.18.42"
 annotations = "26.0.2"
 junit = "6.0.1"
 jdbi = "3.50.0"
-configura = "1.0.0"
-dialectica = "1.0.0"
+configura = "2.0.0"
 h2 = "2.4.240"
 sqlite = "3.50.3.0"
 postgresql = "42.7.8"
 mariadb = "3.5.6"
 testcontainers = "1.21.4"
+
 [libraries]
 lombok = { module = "org.projectlombok:lombok", version.ref = "lombok" }
 annotations = { module = "org.jetbrains:annotations", version.ref = "annotations" }
 junit = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
 junit-launcher = { module = "org.junit.platform:junit-platform-launcher", version.ref = "junit" }
-jdbi-sqlobject = { module = "org.jdbi:jdbi3-sqlobject", version.ref = "jdbi" }
 jdbi = { module = "org.jdbi:jdbi3-core", version.ref = "jdbi" }
 configura = { module = "me.whereareiam:configura", version.ref = "configura" }
-dialectica = { module = "me.whereareiam:dialectica", version.ref = "dialectica" }
 h2 = { module = "com.h2database:h2", version.ref = "h2" }
 sqlite = { module = "org.xerial:sqlite-jdbc", version.ref = "sqlite" }
 postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }

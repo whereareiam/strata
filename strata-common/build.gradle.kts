@@ -1,6 +1,9 @@
-plugins { id("library") }
+plugins {
+    id("library")
+}
+
 dependencies {
     api(project(":strata-api"))
 
-    testImplementation(project(":strata-testkit"))
+    testImplementation(project(":strata-adapter:adapter-memory"))
 }

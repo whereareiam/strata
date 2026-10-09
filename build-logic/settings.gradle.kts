@@ -1,2 +1,8 @@
-pluginManagement { repositories { gradlePluginPortal(); mavenCentral() } }
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        mavenCentral()
+    }
+}
+
 rootProject.name = "build-logic"

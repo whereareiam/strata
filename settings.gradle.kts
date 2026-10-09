@@ -1,18 +1,23 @@
 pluginManagement { includeBuild("build-logic") }
+
 rootProject.name = "Strata"
-include("strata-api", "strata-common", "strata-testkit")
-include("strata-integration", "strata-integration:integration-jdbc", "strata-integration:integration-configura", "strata-integration:integration-dialectica")
-// Opt-in sibling checkouts make unreleased integration changes testable without publishing.
+
+include("strata-api")
+include("strata-common")
+include("strata-adapter:adapter-configura")
+include("strata-adapter:adapter-jdbc")
+include("strata-adapter:adapter-jdbi")
+include("strata-adapter:adapter-memory")
+
+// An opt-in sibling checkout makes unreleased Configura changes testable without publishing.
 if (providers.gradleProperty("strata.siblings").orNull == "true") {
     includeBuild("../Configura")
-    includeBuild("../Dialectica")
 }
 
 dependencyResolutionManagement {
     versionCatalogs {
         create("libs") {
-            version("configura", providers.gradleProperty("configuraVersion").orElse("1.0.0").get())
-            version("dialectica", providers.gradleProperty("dialecticaVersion").orElse("1.0.0").get())
+            version("configura", providers.gradleProperty("configuraVersion").orElse("2.0.0").get())
         }
     }
 }
