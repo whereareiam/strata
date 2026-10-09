@@ -2,12 +2,20 @@ package me.whereareiam.strata;
 
 import org.jetbrains.annotations.NotNull;
 
-/** A transformation owned by a plugin or integration. External writes must use the integration's context. */
+/**
+ * One change to an installation, written against the context of the target it changes.
+ *
+ * @param <C> context the target hands to its migrations
+ */
 @FunctionalInterface
 public interface MigrationAction<C> {
-	/** Applies the transformation; the integration decides whether this stages changes or runs in a transaction.
-	 * @param context declared integration resources
-	 * @throws Exception when transformation or validation fails
+	/**
+	 * Applies the change. Everything written through the context belongs to this migration: the
+	 * target keeps it together with the migration's history entry, or discards it when this method
+	 * throws. Other resources may be read, but must not be written.
+	 *
+	 * @param context access to the target being migrated
+	 * @throws Exception when the change cannot be applied; the upgrade stops at this migration
 	 */
 	void apply(@NotNull C context) throws Exception;
 }

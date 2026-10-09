@@ -1,1 +1,3 @@
-plugins { base }
+plugins {
+    base
+}

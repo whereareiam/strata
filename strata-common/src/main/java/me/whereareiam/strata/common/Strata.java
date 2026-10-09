@@ -1,162 +1,160 @@
 package me.whereareiam.strata.common;
 
-import me.whereareiam.strata.*;
+import me.whereareiam.strata.Migration;
+import me.whereareiam.strata.MigrationBaseline;
+import me.whereareiam.strata.MigrationSession;
+import me.whereareiam.strata.MigrationStream;
+import me.whereareiam.strata.exception.MigrationException;
+import me.whereareiam.strata.exception.MigrationFailedException;
+import me.whereareiam.strata.model.AppliedMigration;
+import me.whereareiam.strata.model.MigrationReport;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.*;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
-/** Plans installation upgrades before normal configuration binding or schema initialization. */
+/**
+ * Brings an installation up to date: runs, stream after stream, every migration it has not seen.
+ * <p>
+ * Call {@link #migrate()} once during startup, before the application reads its configuration or
+ * touches its tables.
+ *
+ * <pre>{@code
+ * MigrationReport report = new Strata(List.of(database, configuration)).migrate();
+ * }</pre>
+ */
 public final class Strata {
+	private static final String BASELINE_NAME = "baseline";
+
 	private final List<MigrationStream<?>> streams;
-	private final Map<String, String> environment;
-	private final List<UpgradeVerification> verifications;
 
-	/** Creates an installation coordinator.
-	 * @param streams explicitly registered plugin, feature and platform contributions
-	 * @param environment immutable platform attributes
+	/**
+	 * Registers the streams of an application.
+	 *
+	 * @param streams streams in the order they are upgraded; when one stream's migration reads what
+	 *                another stream removes, the reading stream comes first
+	 * @throws IllegalArgumentException if two streams share an id
 	 */
-	public Strata(@NotNull List<MigrationStream<?>> streams, @NotNull Map<String, String> environment) {
-		this(streams, environment, List.of());
-	}
+	public Strata(@NotNull List<? extends MigrationStream<?>> streams) {
+		Set<String> ids = new HashSet<>();
+		for (MigrationStream<?> stream : streams)
+			if (!ids.add(stream.getId())) throw new IllegalArgumentException("Duplicate stream " + stream.getId());
 
-	/** Creates a coordinator with final installation checks.
-	 * @param streams registered contributions
-	 * @param environment platform attributes
-	 * @param verifications checks repeated after every successful execution
-	 */
-	public Strata(@NotNull List<MigrationStream<?>> streams, @NotNull Map<String, String> environment,
-			@NotNull List<UpgradeVerification> verifications) {
-		this.verifications = List.copyOf(verifications);
 		this.streams = List.copyOf(streams);
-		this.environment = Map.copyOf(environment);
 	}
 
-	/** Inspects authoritative history and dependencies without transforming or writing resources.
-	 * @return ordered descriptions of pending work
-	 * @throws Exception when history or declarations are incompatible
+	/**
+	 * Runs every pending migration. A stream is finished before the next one starts, and each
+	 * migration is recorded as soon as it has succeeded, so a failed run continues where it stopped
+	 * the next time.
+	 *
+	 * @return the migrations this call ran
+	 * @throws MigrationException when a target cannot be opened, its version does not fit this
+	 *                            build, or a migration fails
 	 */
-	public @NotNull List<String> inspect() throws Exception {
-		try (PreparedUpgrade upgrade = plan(false)) {
-			return upgrade.getPending();
-		}
-	}
-
-	/** Acquires leases and stages supported transformations; SQL executes only during commit.
-	 * Close the result if abandoning preparation. A process crash before commit leaves original resources intact.
-	 * @return a single-use prepared upgrade, retaining its leases until closed
-	 * @throws Exception when detection, recovery or preparation fails
-	 */
-	public @NotNull PreparedUpgrade prepare() throws Exception {
-		return plan(true);
-	}
-
-	/** Recovers interrupted integration commits, prepares pending work, and commits in dependency order.
-	 * @throws Exception when the installation cannot safely start
-	 */
-	public void execute() throws Exception {
-		try (PreparedUpgrade upgrade = prepare()) {
-			upgrade.commit();
-		}
-	}
-
-	private PreparedUpgrade plan(boolean writable) throws Exception {
-		List<MigrationStream<?>> ordered = order();
-		Map<String, MigrationIntegration<?>> integrations = new TreeMap<>();
-		for (MigrationStream<?> stream : ordered) {
-			MigrationIntegration<?> integration = stream.getIntegration();
-			MigrationIntegration<?> previous = integrations.putIfAbsent(integration.id(), integration);
-			if (previous != null && previous != integration)
-				throw new IllegalArgumentException("Reuse one integration instance for resource " + integration.id());
-		}
-		Map<String, MigrationSession<?>> sessions = new LinkedHashMap<>();
-		try {
-			for (var integration : integrations.entrySet())
-				sessions.put(integration.getKey(), integration.getValue().open(writable));
-			List<String> pending = new ArrayList<>();
-			List<PreparedMigration> commits = new ArrayList<>();
-			// Validate every stream before invoking any transformation.
-			List<Resolved<?>> resolved = new ArrayList<>();
-			for (MigrationStream<?> stream : ordered)
-				resolved.add(resolve(stream, sessions.get(stream.getIntegration().id())));
-			for (Resolved<?> transition : resolved)
-				prepare(transition, writable, pending, commits);
-			if (writable)
-				for (UpgradeVerification verification : verifications) commits.add(verification::verify);
-			return new PreparedUpgrade(pending, commits, new ArrayList<>(sessions.values()));
-		} catch (Exception | Error failure) {
-			List<MigrationSession<?>> opened = new ArrayList<>(sessions.values());
-			Collections.reverse(opened);
-			for (MigrationSession<?> session : opened)
-				try { session.close(); } catch (Exception closeFailure) { failure.addSuppressed(closeFailure); }
-			throw failure;
-		}
-	}
-
-	@SuppressWarnings("unchecked")
-	private <C> Resolved<C> resolve(MigrationStream<C> stream, MigrationSession<?> rawSession) throws Exception {
-		MigrationSession<C> session = (MigrationSession<C>) rawSession;
-		MigrationHistory history = session.history(stream.getId());
-		boolean adopting = history == null;
-		if (adopting) history = new MigrationHistory(stream.getDetector().detect(session.context()), List.of());
-		if (history.version() > stream.getCurrentVersion())
-			throw new IllegalStateException("Unsupported future layout: " + stream.getId());
-		Map<Integer, Migration<C>> bySource = new HashMap<>();
-		for (Migration<C> migration : stream.getMigrations()) bySource.put(migration.getFromVersion(), migration);
-		for (AppliedMigration entry : history.getApplied()) {
-			Migration<C> declaration = bySource.get(entry.getFromVersion());
-			if (declaration == null || !AppliedMigration.of(declaration).equals(entry))
-				throw new IllegalStateException("Missing or changed migration: " + stream.getId() + "/" + entry.getId());
-		}
-		List<Migration<C>> pending = new ArrayList<>();
-		List<AppliedMigration> applied = new ArrayList<>(history.getApplied());
-		int cursor = history.version();
-		while (cursor < stream.getCurrentVersion()) {
-			Migration<C> migration = bySource.get(cursor);
-			if (migration == null) throw new IllegalStateException("Missing transition from " + stream.getId() + ":" + cursor);
-			pending.add(migration);
-			applied.add(AppliedMigration.of(migration));
-			cursor = migration.getToVersion();
-		}
-		return new Resolved<>(stream, session, new MigrationHistory(history.getBaseline(), applied), pending, adopting);
-	}
-
-	private <C> void prepare(Resolved<C> resolved, boolean writable, List<String> descriptions,
-			List<PreparedMigration> commits) throws Exception {
-		for (Migration<C> migration : resolved.pending())
-			descriptions.add(resolved.stream().getId() + ": " + migration.getFromVersion() + " -> " + migration.getToVersion() + " (" + migration.getId() + ")");
-		if (resolved.adopting()) descriptions.add(resolved.stream().getId() + ": adopt baseline " + resolved.target().getBaseline());
-		if (writable && (resolved.adopting() || !resolved.pending().isEmpty()))
-			commits.add(resolved.session().prepare(resolved.stream().getId(), resolved.target(), resolved.pending()));
-	}
-
-	private List<MigrationStream<?>> order() {
-		Map<String, MigrationStream<?>> active = new TreeMap<>();
-		Set<String> declared = new HashSet<>();
+	public @NotNull MigrationReport migrate() {
+		Map<String, List<AppliedMigration>> applied = new LinkedHashMap<>();
 		for (MigrationStream<?> stream : streams) {
-			if (!declared.add(stream.getId())) throw new IllegalArgumentException("Duplicate stream " + stream.getId());
-			if (stream.getAppliesTo().test(environment)) active.put(stream.getId(), stream);
+			List<AppliedMigration> entries = inSession(stream, this::upgrade);
+			if (!entries.isEmpty()) applied.put(stream.getId(), entries);
 		}
-		List<MigrationStream<?>> ordered = new ArrayList<>();
-		Set<String> visited = new HashSet<>();
-		for (MigrationStream<?> stream : active.values()) visit(stream, active, visited, new HashSet<>(), ordered);
-		return ordered;
+
+		return new MigrationReport(applied);
 	}
 
-	private void visit(MigrationStream<?> stream, Map<String, MigrationStream<?>> active, Set<String> visited,
-			Set<String> visiting, List<MigrationStream<?>> ordered) {
-		if (visited.contains(stream.getId())) return;
-		if (!visiting.add(stream.getId())) throw new IllegalArgumentException("Cyclic dependency at " + stream.getId());
-		for (var dependency : new TreeMap<>(stream.getRequires()).entrySet()) {
-			MigrationStream<?> required = active.get(dependency.getKey());
-			if (required == null || required.getCurrentVersion() < dependency.getValue())
-				throw new IllegalArgumentException("Unavailable prerequisite " + dependency.getKey() + " for " + stream.getId());
-			visit(required, active, visited, visiting, ordered);
+	/**
+	 * Lists what {@link #migrate()} would run, without running or recording anything.
+	 *
+	 * @return pending migrations by stream id, in upgrade order; up-to-date streams are left out
+	 * @throws MigrationException when a target cannot be opened or its version does not fit this build
+	 */
+	public @NotNull Map<String, List<Migration<?>>> pending() {
+		Map<String, List<Migration<?>>> pending = new LinkedHashMap<>();
+		for (MigrationStream<?> stream : streams) {
+			List<Migration<?>> migrations = inSession(stream, this::inspect);
+			if (!migrations.isEmpty()) pending.put(stream.getId(), migrations);
 		}
-		visiting.remove(stream.getId());
-		visited.add(stream.getId());
-		ordered.add(stream);
+
+		return pending;
 	}
 
-	private record Resolved<C>(MigrationStream<C> stream, MigrationSession<C> session,
-			MigrationHistory target, List<Migration<C>> pending, boolean adopting) { }
+	private <C> List<AppliedMigration> upgrade(MigrationStream<C> stream, MigrationSession<C> session) throws Exception {
+		List<AppliedMigration> applied = new ArrayList<>();
+		for (Migration<? super C> migration : plan(stream, session, true).getPending()) {
+			AppliedMigration entry = entry(migration.getVersion(), migration.getName());
+			run(stream, session, migration, entry);
+			applied.add(entry);
+		}
+
+		return applied;
+	}
+
+	private <C> List<Migration<?>> inspect(MigrationStream<C> stream, MigrationSession<C> session) throws Exception {
+		return List.copyOf(plan(stream, session, false).getPending());
+	}
+
+	private <C> MigrationPlan<C> plan(
+			MigrationStream<C> stream,
+			MigrationSession<C> session,
+			boolean recordBaseline
+	) throws Exception {
+		int recorded = session.version(stream.getId());
+		MigrationBaseline<? super C> baseline = stream.getBaseline();
+		if (recorded > 0 || baseline == null) return new MigrationPlan<>(stream, recorded);
+
+		int latest = stream.getLatestVersion();
+		int version = baseline.version(session.context(), latest);
+		if (version < 0 || version > latest)
+			throw new IllegalStateException("Baseline of " + stream.getId() + " answered " + version + ", outside 0.." + latest);
+
+		if (version > 0 && recordBaseline) session.apply(stream.getId(), context -> {}, entry(version, BASELINE_NAME));
+
+		return new MigrationPlan<>(stream, version);
+	}
+
+	private <C> void run(
+			MigrationStream<C> stream,
+			MigrationSession<C> session,
+			Migration<? super C> migration,
+			AppliedMigration entry
+	) {
+		try {
+			session.apply(stream.getId(), migration.getAction(), entry);
+		} catch (Exception failure) {
+			preserveInterrupt(failure);
+			throw new MigrationFailedException(stream.getId(), migration.getVersion(), migration.getName(), failure);
+		}
+	}
+
+	private <C, R> List<R> inSession(MigrationStream<C> stream, SessionWork<C, R> work) {
+		if (stream.getMigrations().isEmpty()) return List.of();
+
+		try (MigrationSession<C> session = stream.getTarget().open()) {
+			return work.perform(stream, session);
+		} catch (MigrationException failure) {
+			throw failure;
+		} catch (Exception failure) {
+			preserveInterrupt(failure);
+			throw new MigrationException(stream.getId(), "Could not upgrade " + stream.getId(), failure);
+		}
+	}
+
+	private static AppliedMigration entry(int version, String name) {
+		return new AppliedMigration(version, name, Instant.now().truncatedTo(ChronoUnit.MILLIS));
+	}
+
+	private static void preserveInterrupt(Exception failure) {
+		if (failure instanceof InterruptedException) Thread.currentThread().interrupt();
+	}
+
+	@FunctionalInterface
+	private interface SessionWork<C, R> {
+		List<R> perform(MigrationStream<C> stream, MigrationSession<C> session) throws Exception;
+	}
 }

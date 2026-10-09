@@ -1,3 +1,12 @@
-plugins { `kotlin-dsl` }
-repositories { gradlePluginPortal(); mavenCentral() }
-kotlin { jvmToolchain(17) }
+plugins {
+    `kotlin-dsl`
+}
+
+repositories {
+    gradlePluginPortal()
+    mavenCentral()
+}
+
+kotlin {
+    jvmToolchain(17)
+}

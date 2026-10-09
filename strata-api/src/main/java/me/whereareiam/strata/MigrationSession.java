@@ -1,32 +1,52 @@
 package me.whereareiam.strata;
 
+import me.whereareiam.strata.model.AppliedMigration;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-import java.util.List;
 
-/** A leased integration session. Implementations must reject writes outside declared resources. */
+/**
+ * Exclusive access to an open {@link MigrationTarget}.
+ *
+ * @param <C> context handed to migrations of the target
+ */
 public interface MigrationSession<C> extends AutoCloseable {
-	/** Returns resources for detection and migration actions.
-	 * @return integration context
+	/**
+	 * Returns a context for inspecting the target outside a migration, as a
+	 * {@link MigrationBaseline} does. Changes made through it are not kept.
+	 *
+	 * @return context of the open target
+	 * @throws Exception when the target cannot be read
 	 */
-	@NotNull C context();
-	/** Reads authoritative history without inventing a baseline.
-	 * @param stream stable stream identifier
-	 * @return history, or null when adoption is required
-	 * @throws Exception when history cannot be read
+	@NotNull C context() throws Exception;
+
+	/**
+	 * Reads the version a stream has reached on this target.
+	 *
+	 * @param stream stream id
+	 * @return highest recorded version, or zero when the target knows nothing about the stream
+	 * @throws Exception when the version cannot be read
 	 */
-	@Nullable MigrationHistory history(@NotNull String stream) throws Exception;
-	/** Prepares a transition without publishing resource changes. JDBC actions are deferred until commit.
-	 * @param stream stream identifier
-	 * @param target complete resulting history, including the verified baseline
-	 * @param pending ordered transformations
-	 * @return operation that atomically records history with data where supported, or has durable recovery
-	 * @throws Exception when preparation fails
+	int version(@NotNull String stream) throws Exception;
+
+	/**
+	 * Runs an action and records its entry as one unit: when the action throws, its changes are
+	 * discarded as far as the technology allows and nothing is recorded.
+	 *
+	 * @param stream stream id
+	 * @param action change to run with this session's context
+	 * @param entry  what to record once the action has succeeded; a target stores at least its version
+	 * @throws Exception when the action fails or its result cannot be stored
 	 */
-	@NotNull PreparedMigration prepare(@NotNull String stream, @NotNull MigrationHistory target,
-			@NotNull List<Migration<C>> pending) throws Exception;
-	/** Releases resources without committing unfinished work.
-	 * @throws Exception if release fails
+	void apply(
+			@NotNull String stream,
+			@NotNull MigrationAction<? super C> action,
+			@NotNull AppliedMigration entry
+	) throws Exception;
+
+	/**
+	 * Releases the lock and the resources of the session.
+	 *
+	 * @throws Exception when releasing fails
 	 */
-	@Override void close() throws Exception;
+	@Override
+	void close() throws Exception;
 }

@@ -1,1 +1,3 @@
-plugins { id("library") }
+plugins {
+    id("library")
+}
