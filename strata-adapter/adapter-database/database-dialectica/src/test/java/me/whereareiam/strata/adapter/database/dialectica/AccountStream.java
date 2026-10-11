@@ -1,9 +1,9 @@
 package me.whereareiam.strata.adapter.database.dialectica;
 
-import me.whereareiam.dialectica.schema.Column;
-import me.whereareiam.dialectica.schema.Index;
+import me.whereareiam.dialectica.schema.ColumnDefinition;
+import me.whereareiam.dialectica.schema.IndexDefinition;
 import me.whereareiam.dialectica.schema.Schema;
-import me.whereareiam.dialectica.schema.Table;
+import me.whereareiam.dialectica.schema.TableDefinition;
 import me.whereareiam.dialectica.schema.change.AddColumn;
 import me.whereareiam.dialectica.schema.change.CreateIndex;
 import me.whereareiam.dialectica.schema.change.CreateTable;
@@ -32,19 +32,19 @@ final class AccountStream {
 	static final String STREAM = "plugin/accounts";
 
 	/** The table as the first build created it. */
-	static final Table FIRST = Table.builder("accounts")
-			.column(Column.builder("id", ColumnType.integer()).notNull().build())
-			.column(Column.builder("username", ColumnType.varchar(32)).notNull().build())
+	static final TableDefinition FIRST = TableDefinition.builder("accounts")
+			.column(ColumnDefinition.builder("id", ColumnType.integer()).notNull().build())
+			.column(ColumnDefinition.builder("username", ColumnType.varchar(32)).notNull().build())
 			.primaryKey("id")
 			.build();
 
-	static final Column USERNAME_KEY = Column.builder("username_key", ColumnType.varchar(32)).build();
-	private static final Index USERNAME_KEY_INDEX = Index.unique("accounts_username_key", "username_key");
+	static final ColumnDefinition USERNAME_KEY = ColumnDefinition.builder("username_key", ColumnType.varchar(32)).build();
+	private static final IndexDefinition USERNAME_KEY_INDEX = IndexDefinition.unique("accounts_username_key", "username_key");
 
 	/** The table as the newest build describes it. */
-	static final Schema NEWEST = Schema.of(Table.builder("accounts")
-			.column(Column.builder("id", ColumnType.integer()).notNull().build())
-			.column(Column.builder("username", ColumnType.varchar(32)).notNull().build())
+	static final Schema NEWEST = Schema.of(TableDefinition.builder("accounts")
+			.column(ColumnDefinition.builder("id", ColumnType.integer()).notNull().build())
+			.column(ColumnDefinition.builder("username", ColumnType.varchar(32)).notNull().build())
 			.column(USERNAME_KEY)
 			.primaryKey("id")
 			.index(USERNAME_KEY_INDEX)

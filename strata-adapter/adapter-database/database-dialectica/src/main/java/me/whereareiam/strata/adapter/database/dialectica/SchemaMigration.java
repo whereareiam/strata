@@ -14,8 +14,8 @@ import java.util.Objects;
  *
  * <pre>{@code
  * .migration(SchemaMigration.of(2, "last-seen",
- *         new AddColumn("accounts", Column.builder("last_seen_at", ColumnType.bigint()).build()),
- *         new CreateIndex("accounts", Index.plain("accounts_last_seen_at", "last_seen_at"))))
+ *         new AddColumn("accounts", ColumnDefinition.builder("last_seen_at", ColumnType.bigint()).build()),
+ *         new CreateIndex("accounts", IndexDefinition.plain("accounts_last_seen_at", "last_seen_at"))))
  * }</pre>
  */
 public final class SchemaMigration {
