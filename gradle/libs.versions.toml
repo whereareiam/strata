@@ -1,7 +1,7 @@
 [versions]
 lombok = "1.18.42"
 annotations = "26.0.2"
-junit = "6.0.1"
+junit = "6.1.3"
 jdbi = "3.50.0"
 configura = "2.0.0"
 dialectica = "3.0.0"
