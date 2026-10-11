@@ -244,12 +244,12 @@ databases you support.
 
 ```kotlin
 implementation("me.whereareiam:strata-adapter-database-dialectica:3.0.0")
-implementation("me.whereareiam:dialectica-bundle:2.0.0")             // every dialect, or one per database:
-// implementation("me.whereareiam:dialectica-dialect-postgresql:2.0.0")
+implementation("me.whereareiam:dialectica-bundle:3.0.0")             // every dialect, or one per database:
+// implementation("me.whereareiam:dialectica-dialect-postgresql:3.0.0")
 ```
 
 ```java
-import me.whereareiam.dialectica.schema.Index;
+import me.whereareiam.dialectica.schema.IndexDefinition;
 import me.whereareiam.dialectica.schema.Schema;
 import me.whereareiam.dialectica.schema.change.AddColumn;
 import me.whereareiam.dialectica.schema.change.CreateIndex;
@@ -262,7 +262,7 @@ MigrationStream<DatabaseContext> database = MigrationStream.<DatabaseContext>bui
         .creation(SchemaCreation.of(Schema.of(accounts)))     // a new installation gets the newest tables
         .migration(SchemaMigration.of(2, "username-key",
                 new AddColumn("accounts", usernameKey),
-                new CreateIndex("accounts", Index.unique("accounts_username_key", "username_key"))))
+                new CreateIndex("accounts", IndexDefinition.unique("accounts_username_key", "username_key"))))
         .migration(3, "fill-username-keys", db -> db.update("UPDATE accounts SET username_key = LOWER(username)"))
         .build();
 ```

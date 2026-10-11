@@ -1,6 +1,6 @@
 package me.whereareiam.strata.adapter.database.dialectica;
 
-import me.whereareiam.dialectica.schema.Index;
+import me.whereareiam.dialectica.schema.IndexDefinition;
 import me.whereareiam.dialectica.schema.change.AddColumn;
 import me.whereareiam.dialectica.schema.change.CreateIndex;
 import me.whereareiam.dialectica.schema.change.CreateTable;
@@ -86,7 +86,7 @@ final class SchemaScenarios {
 				.migration(SchemaMigration.of(1, "create-accounts", new CreateTable(AccountStream.FIRST)))
 				.migration(SchemaMigration.of(2, "username-key",
 						new AddColumn("accounts", AccountStream.USERNAME_KEY),
-						new CreateIndex("accounts", Index.unique("accounts_missing", "missing"))))
+						new CreateIndex("accounts", IndexDefinition.unique("accounts_missing", "missing"))))
 				.build();
 
 		MigrationFailedException failure = assertThrows(MigrationFailedException.class, () -> migrate(broken));
