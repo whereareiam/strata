@@ -17,6 +17,7 @@ dependencies {
     // One adapter per kind of thing you migrate:
     implementation("me.whereareiam:strata-adapter-database:3.0.0")       // a database
     implementation("me.whereareiam:strata-adapter-database-jdbi:3.0.0")  // ... reached through your Jdbi
+    implementation("me.whereareiam:strata-adapter-database-dialectica:3.0.0") // ... changed through Dialectica
     implementation("me.whereareiam:strata-adapter-configura:3.0.0")  // config files, through Configura
 
     testImplementation("me.whereareiam:strata-adapter-memory:3.0.0") // an in-memory target for tests
@@ -229,9 +230,53 @@ MigrationStream<DatabaseContext> database = MigrationStream.<DatabaseContext>bui
 
 While a stream is upgraded, your `Jdbi` finds the migration's handle for the current thread. Inside
 a migration you therefore use your own `jdbi` as everywhere else, with its plugins, mappers and
-DAOs, including Dialectica's `DialectPlugin`, and everything runs on the migration's connection and
+DAOs, including Dialectica's `DialecticaPlugin`, and everything runs on the migration's connection and
 inside its transaction. A `useTransaction` in a migration joins that transaction and does not
 commit it. Stay on the thread the migration was called on.
+
+## Dialectica
+
+With `strata-adapter-database-dialectica`, a database stream's creation and its schema migrations
+can be written as [Dialectica](https://github.com/whereareiam/Dialectica) schemas and schema changes
+instead of SQL. The module brings Dialectica's entry point and models, but no dialect: add
+`dialectica-bundle` for all five databases, or the `dialectica-dialect-<database>` modules of the
+databases you support.
+
+```kotlin
+implementation("me.whereareiam:strata-adapter-database-dialectica:3.0.0")
+implementation("me.whereareiam:dialectica-bundle:2.0.0")             // every dialect, or one per database:
+// implementation("me.whereareiam:dialectica-dialect-postgresql:2.0.0")
+```
+
+```java
+import me.whereareiam.dialectica.schema.Index;
+import me.whereareiam.dialectica.schema.Schema;
+import me.whereareiam.dialectica.schema.change.AddColumn;
+import me.whereareiam.dialectica.schema.change.CreateIndex;
+import me.whereareiam.strata.adapter.database.dialectica.SchemaCreation;
+import me.whereareiam.strata.adapter.database.dialectica.SchemaMigration;
+
+MigrationStream<DatabaseContext> database = MigrationStream.<DatabaseContext>builder()
+        .id("my-plugin/database")
+        .target(new DatabaseTarget(new JdbiConnector(jdbi)))
+        .creation(SchemaCreation.of(Schema.of(accounts)))     // a new installation gets the newest tables
+        .migration(SchemaMigration.of(2, "username-key",
+                new AddColumn("accounts", usernameKey),
+                new CreateIndex("accounts", Index.unique("accounts_username_key", "username_key"))))
+        .migration(3, "fill-username-keys", db -> db.update("UPDATE accounts SET username_key = LOWER(username)"))
+        .build();
+```
+
+`SchemaCreation.of(schema)` is a creation action that creates every table of the schema.
+`SchemaMigration.of(version, name, changes...)` is a migration that applies the changes in order.
+Both write through `Dialectica.on(...)` on the migration's connection, so the schema is written under
+the target's lock and inside the migration's transaction. On PostgreSQL and SQLite a failed schema
+migration is therefore rolled back completely. On MySQL, MariaDB and H2, Dialectica skips every change
+the database already has, so a migration that stopped halfway finishes on the next start. Data steps
+stay ordinary Java migrations, and SQL scripts can share the stream.
+
+Keep the creation's schema and the migrations in step: the creation describes what the last
+migration leaves behind.
 
 ## Testing migrations
 
@@ -260,7 +305,7 @@ and releases it afterwards.
 
 ```sh
 ./gradlew build
-./gradlew test -PintegrationTests=true   # adds the PostgreSQL and MariaDB tests, needs Docker
+./gradlew test -PintegrationTests=true   # adds the PostgreSQL, MariaDB and MySQL tests, needs Docker
 ```
 
 The Configura adapter needs Configura 2.0.0 or newer, the first release in which a feature can
