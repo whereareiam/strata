@@ -42,13 +42,13 @@ public final class Strata {
 	}
 
 	/**
-	 * Runs every pending migration. A stream is finished before the next one starts, and each
-	 * migration is recorded as soon as it has succeeded, so a failed run continues where it stopped
-	 * the next time.
+	 * Runs every pending migration, or a stream's creation action on a new installation. A stream
+	 * is finished before the next one starts, and each migration is recorded as soon as it has
+	 * succeeded, so a failed run continues where it stopped the next time.
 	 *
-	 * @return the migrations this call ran
+	 * @return the migrations and creations this call ran
 	 * @throws MigrationException when a target cannot be opened, its version does not fit this
-	 *                            build, or a migration fails
+	 *                            build, or a migration or creation fails
 	 */
 	public @NotNull MigrationReport migrate() {
 		Map<String, List<AppliedMigration>> applied = new LinkedHashMap<>();
@@ -63,7 +63,8 @@ public final class Strata {
 	/**
 	 * Lists what {@link #migrate()} would run, without running or recording anything.
 	 *
-	 * @return pending migrations by stream id, in upgrade order; up-to-date streams are left out
+	 * @return pending migrations by stream id, in upgrade order; up-to-date streams and new
+	 *         installations, which only run their creation, are left out
 	 * @throws MigrationException when a target cannot be opened or its version does not fit this build
 	 */
 	public @NotNull Map<String, List<Migration<?>>> pending() {

@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalInt;
 
 /**
  * A target that lives in memory, for testing migrations and the code that registers them. What it
@@ -50,11 +51,10 @@ public final class MemoryTarget<C> implements MigrationTarget<C> {
 		}
 
 		@Override
-		public int version(@NotNull String stream) {
+		public @NotNull OptionalInt version(@NotNull String stream) {
 			return history(stream).stream()
 					.mapToInt(AppliedMigration::getVersion)
-					.max()
-					.orElse(0);
+					.max();
 		}
 
 		@Override

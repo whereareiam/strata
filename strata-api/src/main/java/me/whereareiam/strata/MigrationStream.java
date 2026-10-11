@@ -16,10 +16,11 @@ import java.util.regex.Pattern;
  * or its files in a configuration directory.
  *
  * <pre>{@code
- * MigrationStream<JdbcContext> database = MigrationStream.<JdbcContext>builder()
+ * MigrationStream<DatabaseContext> database = MigrationStream.<DatabaseContext>builder()
  *         .id("my-plugin/database")
- *         .target(new JdbcTarget(dataSource))
- *         .baseline((context, latest) -> context.tableExists("accounts") ? 0 : latest)
+ *         .target(new DatabaseTarget(dataSource))
+ *         .baseline((context, latest) -> context.tableExists("accounts") ? OptionalInt.of(0) : OptionalInt.empty())
+ *         .creation(context -> context.execute("CREATE TABLE accounts (id INT PRIMARY KEY, last_login BIGINT)"))
  *         .migration(1, "add-last-login", context -> context.execute("ALTER TABLE accounts ADD last_login BIGINT"))
  *         .build();
  * }</pre>
@@ -40,8 +41,15 @@ public final class MigrationStream<C> {
 	/** Declared migrations in ascending version order, without gaps. */
 	private final @NotNull List<Migration<? super C>> migrations;
 
-	/** Decides the starting version of an installation without history; without it, that version is zero. */
+	/**
+	 * Tells a new installation from an existing one when the target has no history. Without it, an
+	 * installation without history is new when the stream has a creation action, and at version
+	 * zero otherwise.
+	 */
 	private final @Nullable MigrationBaseline<? super C> baseline;
+
+	/** Builds the newest form on a new installation, which is then recorded at the latest version. */
+	private final @Nullable MigrationAction<? super C> creation;
 
 	private MigrationStream(Builder<C> builder) {
 		String id = Objects.requireNonNull(builder.id, "id");
@@ -52,6 +60,7 @@ public final class MigrationStream<C> {
 		this.target = Objects.requireNonNull(builder.target, "target");
 		this.migrations = ordered(id, builder.migrations);
 		this.baseline = builder.baseline;
+		this.creation = builder.creation;
 	}
 
 	/**
@@ -100,6 +109,7 @@ public final class MigrationStream<C> {
 		private String id;
 		private MigrationTarget<C> target;
 		private MigrationBaseline<? super C> baseline;
+		private MigrationAction<? super C> creation;
 
 		private Builder() {
 		}
@@ -128,14 +138,30 @@ public final class MigrationStream<C> {
 		}
 
 		/**
-		 * Sets how the starting version of an installation without history is found. Without a
-		 * baseline such an installation starts at zero and runs every migration.
+		 * Sets how an installation without history is told apart: new, or existing at some version.
+		 * Without a baseline such an installation is new when the stream has a creation action, and
+		 * otherwise starts at zero and runs every migration.
 		 *
 		 * @param baseline inspection of an installation without history
 		 * @return this builder
 		 */
 		public @NotNull Builder<C> baseline(@NotNull MigrationBaseline<? super C> baseline) {
 			this.baseline = baseline;
+			return this;
+		}
+
+		/**
+		 * Sets how a new installation is built in the newest form. On a new installation Strata runs
+		 * it under the target's lock and records the latest version in the same unit, as it does for
+		 * a migration, and runs no migration. An existing installation never runs it. A stream with
+		 * a creation action and no migrations is recorded at version zero.
+		 *
+		 * @param creation builds what the latest version describes, such as every table in its
+		 *                 current form
+		 * @return this builder
+		 */
+		public @NotNull Builder<C> creation(@NotNull MigrationAction<? super C> creation) {
+			this.creation = creation;
 			return this;
 		}
 

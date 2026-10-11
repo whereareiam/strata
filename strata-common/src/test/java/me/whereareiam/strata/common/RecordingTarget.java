@@ -8,9 +8,11 @@ import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.OptionalInt;
 
 /**
- * A target for these tests: migrations add to a list, and applied entries are kept in order.
+ * A target for these tests: migrations add to a list, and applied entries are kept in order. A
+ * failed action leaves the list as it was, as a transactional target does.
  */
 final class RecordingTarget implements MigrationTarget<List<String>> {
 	final List<String> state = new ArrayList<>();
@@ -25,8 +27,8 @@ final class RecordingTarget implements MigrationTarget<List<String>> {
 			}
 
 			@Override
-			public int version(@NotNull String stream) {
-				return applied.stream().mapToInt(AppliedMigration::getVersion).max().orElse(0);
+			public @NotNull OptionalInt version(@NotNull String stream) {
+				return applied.stream().mapToInt(AppliedMigration::getVersion).max();
 			}
 
 			@Override
@@ -35,7 +37,15 @@ final class RecordingTarget implements MigrationTarget<List<String>> {
 					@NotNull MigrationAction<? super List<String>> action,
 					@NotNull AppliedMigration entry
 			) throws Exception {
-				action.apply(state);
+				List<String> before = List.copyOf(state);
+				try {
+					action.apply(state);
+				} catch (Exception failure) {
+					state.clear();
+					state.addAll(before);
+					throw failure;
+				}
+
 				applied.add(entry);
 			}
 

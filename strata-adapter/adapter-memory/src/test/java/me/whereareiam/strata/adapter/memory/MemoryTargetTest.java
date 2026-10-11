@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.OptionalInt;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -19,16 +20,25 @@ class MemoryTargetTest {
 	@Test
 	void runsActionsOnItsStateAndRemembersThem() throws Exception {
 		try (MigrationSession<List<String>> session = target.open()) {
-			assertEquals(0, session.version("plugin/data"));
+			assertEquals(OptionalInt.empty(), session.version("plugin/data"));
 
 			session.apply("plugin/data", state -> state.add("changed"), entry);
 
-			assertEquals(1, session.version("plugin/data"));
+			assertEquals(OptionalInt.of(1), session.version("plugin/data"));
 		}
 
 		assertEquals(List.of("changed"), target.getState());
 		assertEquals(List.of(entry), target.history("plugin/data"));
 		assertTrue(target.history("plugin/other").isEmpty());
+	}
+
+	@Test
+	void remembersVersionZero() throws Exception {
+		try (MigrationSession<List<String>> session = target.open()) {
+			session.apply("plugin/data", state -> {}, new AppliedMigration(0, "creation", Instant.EPOCH));
+
+			assertEquals(OptionalInt.of(0), session.version("plugin/data"));
+		}
 	}
 
 	@Test

@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.OptionalInt;
 import javax.sql.DataSource;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -29,12 +30,12 @@ class DatabaseSessionTest {
 		DataSource dataSource = TestDatabases.create(dialect, directory);
 
 		try (DatabaseSession session = open(dataSource)) {
-			assertEquals(0, session.version("plugin/database"));
+			assertEquals(OptionalInt.empty(), session.version("plugin/database"));
 
 			session.apply("plugin/database", context -> context.execute("CREATE TABLE accounts (id INT PRIMARY KEY)"), entry(1));
 			session.apply("plugin/database", context -> context.update("INSERT INTO accounts (id) VALUES (?)", 1), entry(2));
 
-			assertEquals(2, session.version("plugin/database"));
+			assertEquals(OptionalInt.of(2), session.version("plugin/database"));
 		}
 
 		assertEquals(1, TestDatabases.count(dataSource, "accounts"));
@@ -53,7 +54,7 @@ class DatabaseSessionTest {
 				throw new IllegalStateException("broken");
 			}, entry(1)));
 
-			assertEquals(0, session.version("plugin/database"));
+			assertEquals(OptionalInt.empty(), session.version("plugin/database"));
 			assertTrue(session.context().getConnection().getAutoCommit());
 		}
 
@@ -83,9 +84,23 @@ class DatabaseSessionTest {
 			session.apply("plugin/database", context -> {}, entry(3));
 			session.apply("plugin/provider/database", context -> {}, entry(1));
 
-			assertEquals(3, session.version("plugin/database"));
-			assertEquals(1, session.version("plugin/provider/database"));
-			assertEquals(0, session.version("plugin/unknown"));
+			assertEquals(OptionalInt.of(3), session.version("plugin/database"));
+			assertEquals(OptionalInt.of(1), session.version("plugin/provider/database"));
+			assertEquals(OptionalInt.empty(), session.version("plugin/unknown"));
+		}
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = {"h2", "sqlite"})
+	void tellsVersionZeroFromNoHistory(String dialect) throws Exception {
+		DataSource dataSource = TestDatabases.create(dialect, directory);
+
+		try (DatabaseSession session = open(dataSource)) {
+			session.apply("plugin/database", context -> {}, entry(0));
+			session.apply("plugin/other", context -> {}, entry(1));
+
+			assertEquals(OptionalInt.of(0), session.version("plugin/database"));
+			assertEquals(OptionalInt.empty(), session.version("plugin/unknown"));
 		}
 	}
 
@@ -94,7 +109,7 @@ class DatabaseSessionTest {
 		DataSource dataSource = TestDatabases.h2();
 
 		try (DatabaseSession session = open(dataSource)) {
-			assertEquals(0, session.version("plugin/database"));
+			assertEquals(OptionalInt.empty(), session.version("plugin/database"));
 			assertFalse(session.context().tableExists("strata_history"));
 		}
 	}

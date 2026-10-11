@@ -11,6 +11,7 @@ import org.jetbrains.annotations.NotNull;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Duration;
+import java.util.OptionalInt;
 
 /**
  * One connection holding the database's migration lock. Every migration runs in a transaction of
@@ -43,7 +44,7 @@ public final class DatabaseSession implements MigrationSession<DatabaseContext> 
 	}
 
 	@Override
-	public int version(@NotNull String stream) throws SQLException {
+	public @NotNull OptionalInt version(@NotNull String stream) throws SQLException {
 		return history.version(stream);
 	}
 

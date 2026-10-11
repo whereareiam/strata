@@ -57,7 +57,7 @@ class MysqlLockTest {
 	/** Does what an upgrade does: opens the database, and runs the migration unless it is recorded. */
 	private static boolean upgrade(DataSource dataSource) {
 		try (DatabaseSession session = new DatabaseSession(new DataSourceConnector(dataSource).open(), Duration.ofSeconds(30))) {
-			if (session.version("plugin/database") > 0) return false;
+			if (session.version("plugin/database").isPresent()) return false;
 
 			session.apply("plugin/database", context -> {
 				context.execute("CREATE TABLE accounts (id INT PRIMARY KEY)");
