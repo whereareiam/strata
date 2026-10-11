@@ -13,7 +13,10 @@ public class AppliedMigration {
 	/** Version the stream reached with this entry. */
 	int version;
 
-	/** Name the migration had when it was applied. */
+	/**
+	 * Name the migration had when it was applied; {@code baseline} for a version a baseline found,
+	 * {@code creation} for a new installation built by the stream's creation action.
+	 */
 	@NotNull String name;
 
 	/** When the entry was recorded, to the millisecond. */

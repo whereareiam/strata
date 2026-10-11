@@ -1,6 +1,7 @@
 package me.whereareiam.strata;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.TextNode;
 import me.whereareiam.configura.Config;
 import me.whereareiam.configura.Configura;
 import me.whereareiam.strata.adapter.configura.ConfigContext;
@@ -19,6 +20,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.OptionalInt;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -62,10 +64,10 @@ class StrataIntegrationTest {
 	@Test
 	void runsNothingOnANewInstallation() {
 		MigrationStream<DatabaseContext> database = database()
-				.baseline((context, latest) -> context.tableExists("routes") ? 0 : latest)
+				.baseline((context, latest) -> context.tableExists("routes") ? OptionalInt.of(0) : OptionalInt.empty())
 				.build();
 		MigrationStream<ConfigContext> configuration = configuration()
-				.baseline((files, latest) -> files.exists("settings.yml") ? 0 : latest)
+				.baseline((files, latest) -> files.exists("settings.yml") ? OptionalInt.of(0) : OptionalInt.empty())
 				.build();
 
 		assertTrue(new Strata(List.of(database, configuration)).migrate().isEmpty());
@@ -74,6 +76,29 @@ class StrataIntegrationTest {
 		assertEquals(0, tables);
 		assertEquals(1, settings().path("_version").asInt());
 		assertTrue(new Strata(List.of(database, configuration)).pending().isEmpty());
+	}
+
+	@Test
+	void createsANewInstallationInItsNewestForm() {
+		MigrationStream<DatabaseContext> database = database()
+				.baseline((context, latest) -> context.tableExists("routes") ? OptionalInt.of(0) : OptionalInt.empty())
+				.creation(context -> jdbi.useHandle(handle -> {
+					handle.execute("CREATE TABLE routes (name VARCHAR(32) PRIMARY KEY, target VARCHAR(32))");
+					handle.execute("INSERT INTO routes (name, target) VALUES (?, ?)", "hub", "lobby-1");
+				}))
+				.build();
+		MigrationStream<ConfigContext> configuration = configuration()
+				.baseline((files, latest) -> files.exists("settings.yml") ? OptionalInt.of(0) : OptionalInt.empty())
+				.creation(files -> files.put("settings.yml", "/name", TextNode.valueOf("lobby")))
+				.build();
+
+		MigrationReport report = new Strata(List.of(database, configuration)).migrate();
+
+		assertEquals(List.of("plugin/database", "plugin/config"), List.copyOf(report.getApplied().keySet()));
+		assertEquals(List.of("hub=lobby-1"), routes());
+		assertEquals("lobby", settings().path("name").asText());
+		assertEquals(1, settings().path("_version").asInt());
+		assertTrue(new Strata(List.of(database, configuration)).migrate().isEmpty());
 	}
 
 	@Test

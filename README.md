@@ -12,14 +12,14 @@ repositories {
 }
 
 dependencies {
-    implementation("me.whereareiam:strata:2.0.0")
+    implementation("me.whereareiam:strata:3.0.0")
 
     // One adapter per kind of thing you migrate:
-    implementation("me.whereareiam:strata-adapter-database:2.0.0")       // a database
-    implementation("me.whereareiam:strata-adapter-database-jdbi:2.0.0")  // ... reached through your Jdbi
-    implementation("me.whereareiam:strata-adapter-configura:2.0.0")  // config files, through Configura
+    implementation("me.whereareiam:strata-adapter-database:3.0.0")       // a database
+    implementation("me.whereareiam:strata-adapter-database-jdbi:3.0.0")  // ... reached through your Jdbi
+    implementation("me.whereareiam:strata-adapter-configura:3.0.0")  // config files, through Configura
 
-    testImplementation("me.whereareiam:strata-adapter-memory:2.0.0") // an in-memory target for tests
+    testImplementation("me.whereareiam:strata-adapter-memory:3.0.0") // an in-memory target for tests
 }
 ```
 
@@ -44,11 +44,13 @@ import me.whereareiam.strata.adapter.database.DatabaseTarget;
 import me.whereareiam.strata.model.MigrationReport;
 
 import java.util.List;
+import java.util.OptionalInt;
 
 MigrationStream<DatabaseContext> database = MigrationStream.<DatabaseContext>builder()
         .id("my-plugin/database")
         .target(new DatabaseTarget(dataSource))
-        .baseline((db, latest) -> db.tableExists("accounts") ? 0 : latest)
+        .baseline((db, latest) -> db.tableExists("accounts") ? OptionalInt.of(0) : OptionalInt.empty())
+        .creation(db -> db.execute("CREATE TABLE accounts (name VARCHAR(16) PRIMARY KEY, last_login BIGINT)"))
         .migration(1, "add-last-login", db -> db.execute("ALTER TABLE accounts ADD COLUMN last_login BIGINT"))
         .migration(2, "lowercase-names", db -> db.update("UPDATE accounts SET name = LOWER(name)"))
         .build();
@@ -59,14 +61,14 @@ Configura configura = Config.builder().feature(new StrataFeature()).build();
 MigrationStream<ConfigContext> configuration = MigrationStream.<ConfigContext>builder()
         .id("my-plugin/config")
         .target(new ConfiguraTarget(configura, dataDirectory, "settings.yml"))
-        .baseline((files, latest) -> files.exists("settings.yml") ? 0 : latest)
+        .baseline((files, latest) -> files.exists("settings.yml") ? OptionalInt.of(0) : OptionalInt.empty())
         .migration(1, "split-routing", files -> files.move("settings.yml", "/connection/routing", "routing.yml", "/routing"))
         .build();
 
 MigrationReport report = new Strata(List.of(database, configuration)).migrate();
 ```
 
-Call `migrate()` once during startup, before the application reads its configuration or creates
+Call `migrate()` once during startup, before the application reads its configuration or touches
 its tables. It upgrades the streams in the order given, returns what it ran, and throws a
 `MigrationException` when the installation could not be brought up to date; do not start then.
 `pending()` lists what `migrate()` would run without running anything.
@@ -83,15 +85,28 @@ its tables. It upgrades the streams in the order given, returns what it ran, and
 ### New installations and installations older than Strata
 
 When a target has no version for a stream, Strata cannot know where the installation stands, so it
-asks the stream's **baseline** once. It answers with the version the installation is already at:
+asks the stream's **baseline**. It answers whether the installation is new, and if not, which
+version it is already at:
 
-- `latest` for a new installation, whose tables and files the application is about to create in
-  their current form. Strata records that version and runs nothing.
-- `0` for an existing installation that never ran a migration. Everything runs.
-- Anything in between if an older mechanism left a version you can read.
+- `OptionalInt.empty()` for a new installation. Strata runs the stream's **creation** action, which
+  builds everything in its newest form, and records the latest version. No migration runs.
+- `OptionalInt.of(0)` for an existing installation that never ran a migration. Everything runs.
+- Anything up to `latest` if an older mechanism left a version you can read, or the installation
+  already has the newest layout. The creation action does not run.
 
-A stream without a baseline starts every installation at 0. Use that when the migrations themselves
-create the tables.
+The creation action runs like a migration: under the target's lock, in the same transaction as the
+version it records, and rolled back as far as the target allows when it throws. Two instances
+installing at once therefore create once; the second one waits for the lock and finds the latest
+version. `migrate()` reports it as an entry named `creation`; `pending()` lists migrations only, so
+a new installation has nothing pending.
+
+Without a baseline, an installation without history is new when the stream has a creation action,
+and otherwise starts at 0, which suits a stream whose migrations themselves create the tables.
+Without a creation action, a new installation is only recorded at the latest version and the
+application creates its tables and files itself.
+
+A stream with a creation action and no migrations yet is recorded at version 0, so its first
+migration runs on the installations created before it. A stream with neither is skipped.
 
 ## SQL scripts
 
@@ -132,7 +147,8 @@ A config target takes the file that carries the stream's version as its third ar
 writes the version there as `_version`, the first value in the file, in the same step as the
 migration's changes. The version therefore travels with the configuration when a user copies or
 restores it, and one config target serves one stream. On a new installation the baseline's answer is
-recorded by creating that file with only `_version` in it; Configura's `update` then adds the rest.
+recorded by creating that file with `_version` and whatever the creation action wrote; Configura's
+`update` then adds the rest.
 
 `_version` is not part of your model. `StrataFeature` reserves the key, so Configura carries it
 through every rewrite of the file; a `ConfiguraTarget` refuses a Configura without the feature.
@@ -171,8 +187,8 @@ stops in between, the next start skips the copy and runs the delete.
 | MySQL, MariaDB, H2 | Data changes are rolled back. Schema changes stay, because these databases commit on every DDL statement. | Same. |
 | Config directory | No file changes. | Either no file changed, or the next start finishes replacing all of them. |
 
-In every case the failed migration is not recorded and runs again next time; migrations before it
-stay applied. On MySQL, MariaDB and H2, write schema migrations so that a second run succeeds, for
+A creation action behaves the same. In every case the failed migration is not recorded and runs
+again next time; migrations before it stay applied. On MySQL, MariaDB and H2, write schema migrations so that a second run succeeds, for
 example with `IF NOT EXISTS` or `db.columnExists(...)`, and keep one schema change per migration.
 
 `MigrationFailedException` carries the stream, version and name of the migration that threw.
@@ -187,7 +203,8 @@ second one fails immediately. H2 and SQLite are treated as owned by a single pro
 ## What Strata stores
 
 - In a database: the table `strata_history` with one row per stream and version, with the
-  migration's name and the time it ran. The highest version is where the stream stands.
+  migration's name (`baseline` or `creation` for the entries Strata adds itself) and the time it
+  ran. The highest version is where the stream stands.
 - In a config file: `_version`.
 - In a config directory: the folder `.strata/`, with `backup/<stream>/v<version>/` holding every
   file as it was before that migration changed it. Strata never reads it back, so the folder can be
@@ -231,8 +248,8 @@ assertEquals(List.of(1, 2), target.history("my-plugin/data").stream().map(Applie
 ## Migrating something else
 
 Implement `MigrationTarget<C>` and `MigrationSession<C>`, depending on `strata-api` only. A session holds the
-target's lock, reads the version a stream has reached, and runs an action and records its version as
-one unit.
+target's lock, reads the version a stream has reached (empty when it knows nothing about the stream,
+which is not the same as a recorded 0), and runs an action and records its version as one unit.
 `MemoryTarget` is the smallest example.
 
 To reach a database through another library, implement `DatabaseConnector` from

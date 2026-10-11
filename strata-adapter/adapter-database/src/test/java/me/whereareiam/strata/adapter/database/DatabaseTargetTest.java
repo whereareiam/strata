@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 
 import java.sql.Connection;
 import java.time.Instant;
+import java.util.OptionalInt;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -32,7 +33,7 @@ class DatabaseTargetTest {
 		}
 
 		try (MigrationSession<DatabaseContext> session = target.open()) {
-			assertEquals(1, session.version("plugin/database"));
+			assertEquals(OptionalInt.of(1), session.version("plugin/database"));
 		}
 	}
 
@@ -59,7 +60,7 @@ class DatabaseTargetTest {
 
 		try (MigrationSession<DatabaseContext> session = new DatabaseTarget(connector).open()) {
 			assertEquals(1, open.get());
-			assertEquals(0, session.version("plugin/database"));
+			assertEquals(OptionalInt.empty(), session.version("plugin/database"));
 		}
 
 		assertEquals(0, open.get());

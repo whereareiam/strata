@@ -1,6 +1,7 @@
 package me.whereareiam.strata.common;
 
 import me.whereareiam.strata.Migration;
+import me.whereareiam.strata.MigrationAction;
 import me.whereareiam.strata.MigrationBaseline;
 import me.whereareiam.strata.MigrationSession;
 import me.whereareiam.strata.MigrationStream;
@@ -13,6 +14,8 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
+import java.util.OptionalInt;
 
 /**
  * Upgrades one stream: opens its target, works out what is left to run from the version the target
@@ -21,15 +24,17 @@ import java.util.List;
  */
 public final class MigrationEngine {
 	private static final String BASELINE_NAME = "baseline";
+	private static final String CREATION_NAME = "creation";
 
 	/**
-	 * Runs every pending migration of a stream, recording each as soon as it has succeeded.
+	 * Runs every pending migration of a stream, recording each as soon as it has succeeded. On a new
+	 * installation it runs the stream's creation action instead and records the latest version.
 	 *
 	 * @param stream stream to upgrade
 	 * @param <C>    context of the stream's target
-	 * @return the migrations this call ran, in order
+	 * @return the migrations this call ran, in order, or the creation entry on a new installation
 	 * @throws MigrationException when the target cannot be opened, its version does not fit this
-	 *                            build, or a migration fails
+	 *                            build, or a migration or the creation fails
 	 */
 	public <C> @NotNull List<AppliedMigration> migrate(@NotNull MigrationStream<C> stream) {
 		return inSession(stream, this::upgrade);
@@ -40,7 +45,7 @@ public final class MigrationEngine {
 	 *
 	 * @param stream stream to inspect
 	 * @param <C>    context of the stream's target
-	 * @return pending migrations, in order
+	 * @return pending migrations, in order; none on a new installation, whose creation is not a migration
 	 * @throws MigrationException when the target cannot be opened or its version does not fit this build
 	 */
 	public <C> @NotNull List<Migration<?>> pending(@NotNull MigrationStream<C> stream) {
@@ -48,55 +53,81 @@ public final class MigrationEngine {
 	}
 
 	private <C> List<AppliedMigration> upgrade(MigrationStream<C> stream, MigrationSession<C> session) throws Exception {
+		OptionalInt recorded = session.version(stream.getId());
+		if (recorded.isPresent()) return runPending(stream, session, recorded.getAsInt());
+
+		OptionalInt found = inspectInstallation(stream, session);
+		if (found.isEmpty()) return install(stream, session);
+
+		int version = found.getAsInt();
+		if (version > 0) session.apply(stream.getId(), context -> {}, entry(version, BASELINE_NAME));
+
+		return runPending(stream, session, version);
+	}
+
+	private <C> List<Migration<?>> inspect(MigrationStream<C> stream, MigrationSession<C> session) throws Exception {
+		OptionalInt recorded = session.version(stream.getId());
+		OptionalInt start = recorded.isPresent() ? recorded : inspectInstallation(stream, session);
+		if (start.isEmpty()) return List.of();
+
+		return List.copyOf(new MigrationPlan<>(stream, start.getAsInt()).getPending());
+	}
+
+	/** Asks the baseline where an installation without history stands; empty means it is new. */
+	private <C> OptionalInt inspectInstallation(MigrationStream<C> stream, MigrationSession<C> session) throws Exception {
+		MigrationBaseline<? super C> baseline = stream.getBaseline();
+		if (baseline == null) return stream.getCreation() == null ? OptionalInt.of(0) : OptionalInt.empty();
+
+		int latest = stream.getLatestVersion();
+		OptionalInt version = Objects.requireNonNull(baseline.version(session.context(), latest), "baseline answer");
+		if (version.isPresent() && (version.getAsInt() < 0 || version.getAsInt() > latest))
+			throw new IllegalStateException("Baseline of " + stream.getId() + " answered " + version.getAsInt() + ", outside 0.." + latest);
+
+		return version;
+	}
+
+	/** Records a new installation at the latest version, building it first when the stream can. */
+	private <C> List<AppliedMigration> install(MigrationStream<C> stream, MigrationSession<C> session) throws Exception {
+		int latest = stream.getLatestVersion();
+		MigrationAction<? super C> creation = stream.getCreation();
+		if (creation == null) {
+			session.apply(stream.getId(), context -> {}, entry(latest, BASELINE_NAME));
+			return List.of();
+		}
+
+		AppliedMigration entry = entry(latest, CREATION_NAME);
+		run(stream, session, creation, entry);
+
+		return List.of(entry);
+	}
+
+	private <C> List<AppliedMigration> runPending(MigrationStream<C> stream, MigrationSession<C> session, int current) {
 		List<AppliedMigration> applied = new ArrayList<>();
-		for (Migration<? super C> migration : plan(stream, session, true).getPending()) {
+		for (Migration<? super C> migration : new MigrationPlan<>(stream, current).getPending()) {
 			AppliedMigration entry = entry(migration.getVersion(), migration.getName());
-			run(stream, session, migration, entry);
+			run(stream, session, migration.getAction(), entry);
 			applied.add(entry);
 		}
 
 		return applied;
 	}
 
-	private <C> List<Migration<?>> inspect(MigrationStream<C> stream, MigrationSession<C> session) throws Exception {
-		return List.copyOf(plan(stream, session, false).getPending());
-	}
-
-	private <C> MigrationPlan<C> plan(
-			MigrationStream<C> stream,
-			MigrationSession<C> session,
-			boolean recordBaseline
-	) throws Exception {
-		int recorded = session.version(stream.getId());
-		MigrationBaseline<? super C> baseline = stream.getBaseline();
-		if (recorded > 0 || baseline == null) return new MigrationPlan<>(stream, recorded);
-
-		int latest = stream.getLatestVersion();
-		int version = baseline.version(session.context(), latest);
-		if (version < 0 || version > latest)
-			throw new IllegalStateException("Baseline of " + stream.getId() + " answered " + version + ", outside 0.." + latest);
-
-		if (version > 0 && recordBaseline) session.apply(stream.getId(), context -> {}, entry(version, BASELINE_NAME));
-
-		return new MigrationPlan<>(stream, version);
-	}
-
 	private <C> void run(
 			MigrationStream<C> stream,
 			MigrationSession<C> session,
-			Migration<? super C> migration,
+			MigrationAction<? super C> action,
 			AppliedMigration entry
 	) {
 		try {
-			session.apply(stream.getId(), migration.getAction(), entry);
+			session.apply(stream.getId(), action, entry);
 		} catch (Exception failure) {
 			preserveInterrupt(failure);
-			throw new MigrationFailedException(stream.getId(), migration.getVersion(), migration.getName(), failure);
+			throw new MigrationFailedException(stream.getId(), entry.getVersion(), entry.getName(), failure);
 		}
 	}
 
 	private <C, R> List<R> inSession(MigrationStream<C> stream, SessionWork<C, R> work) {
-		if (stream.getMigrations().isEmpty()) return List.of();
+		if (stream.getMigrations().isEmpty() && stream.getCreation() == null) return List.of();
 
 		try (MigrationSession<C> session = stream.getTarget().open()) {
 			return work.perform(stream, session);

@@ -7,6 +7,7 @@ import me.whereareiam.strata.model.AppliedMigration;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.OptionalInt;
 
 /**
  * The table in which a database remembers the migrations applied to it, one row per stream and
@@ -28,13 +29,16 @@ final class DatabaseHistory {
 	private final DatabaseContext context;
 	private boolean tableKnown;
 
-	int version(String stream) throws SQLException {
-		if (!tableKnown && !context.tableExists(TABLE)) return 0;
+	OptionalInt version(String stream) throws SQLException {
+		if (!tableKnown && !context.tableExists(TABLE)) return OptionalInt.empty();
 
 		try (PreparedStatement statement = context.getConnection().prepareStatement(SELECT)) {
 			statement.setString(1, stream);
 			try (ResultSet rows = statement.executeQuery()) {
-				return rows.next() ? rows.getInt(1) : 0;
+				if (!rows.next()) return OptionalInt.empty();
+
+				int version = rows.getInt(1);
+				return rows.wasNull() ? OptionalInt.empty() : OptionalInt.of(version);
 			}
 		}
 	}

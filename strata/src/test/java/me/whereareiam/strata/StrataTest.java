@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalInt;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -47,9 +48,9 @@ class StrataTest {
 	}
 
 	@Test
-	void stampsAnInstallationTheBaselineCallsCurrent() {
+	void stampsANewInstallation() {
 		MigrationStream<List<String>> stream = stream("plugin/data", 3)
-				.baseline((state, latest) -> latest)
+				.baseline((state, latest) -> OptionalInt.empty())
 				.build();
 
 		assertTrue(new Strata(List.of(stream)).migrate().isEmpty());
@@ -58,9 +59,23 @@ class StrataTest {
 	}
 
 	@Test
+	void reportsTheCreationOfANewInstallation() {
+		MigrationStream<List<String>> stream = stream("plugin/data", 3)
+				.creation(state -> state.add("plugin/data created"))
+				.build();
+
+		MigrationReport report = new Strata(List.of(stream)).migrate();
+
+		assertEquals(List.of("plugin/data created"), target.getState());
+		assertEquals(List.of(3), versions(report.getApplied().get("plugin/data")));
+		assertEquals("creation", report.getApplied().get("plugin/data").get(0).getName());
+		assertTrue(new Strata(List.of(stream)).migrate().isEmpty());
+	}
+
+	@Test
 	void continuesFromTheVersionTheBaselineFinds() {
 		MigrationStream<List<String>> stream = stream("plugin/data", 3)
-				.baseline((state, latest) -> 1)
+				.baseline((state, latest) -> OptionalInt.of(1))
 				.build();
 
 		new Strata(List.of(stream)).migrate();
@@ -73,7 +88,7 @@ class StrataTest {
 	void asksTheBaselineOnlyWithoutHistory() {
 		new Strata(List.of(stream("plugin/data", 1).build())).migrate();
 		MigrationStream<List<String>> stream = stream("plugin/data", 2)
-				.baseline((state, latest) -> latest)
+				.baseline((state, latest) -> OptionalInt.empty())
 				.build();
 
 		new Strata(List.of(stream)).migrate();
@@ -84,7 +99,7 @@ class StrataTest {
 	@Test
 	void rejectsABaselineOutsideTheDeclaredVersions() {
 		MigrationStream<List<String>> stream = stream("plugin/data", 2)
-				.baseline((state, latest) -> latest + 1)
+				.baseline((state, latest) -> OptionalInt.of(latest + 1))
 				.build();
 
 		MigrationException failure = assertThrows(MigrationException.class, () -> new Strata(List.of(stream)).migrate());
@@ -121,7 +136,7 @@ class StrataTest {
 	void listsPendingMigrationsWithoutRunningThem() {
 		new Strata(List.of(stream("plugin/data", 1).build())).migrate();
 		MigrationStream<List<String>> fresh = stream("plugin/fresh", 2)
-				.baseline((state, latest) -> latest)
+				.baseline((state, latest) -> OptionalInt.empty())
 				.build();
 
 		Map<String, List<Migration<?>>> pending = new Strata(List.of(stream("plugin/data", 3).build(), fresh)).pending();

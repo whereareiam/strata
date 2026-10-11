@@ -15,6 +15,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Comparator;
+import java.util.OptionalInt;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -58,7 +59,7 @@ class ConfiguraTargetTest {
 		apply(1, SPLIT_ROUTING);
 		apply(2, TIMEOUT_IN_SECONDS);
 
-		assertEquals(2, version());
+		assertEquals(OptionalInt.of(2), version());
 		assertEquals("_version", settings().fieldNames().next());
 		assertEquals(30, settings().path("timeout").asInt());
 		assertFalse(settings().has("routing"));
@@ -72,23 +73,31 @@ class ConfiguraTargetTest {
 
 		deleteTree(directory.resolve(".strata"));
 
-		assertEquals(1, version());
+		assertEquals(OptionalInt.of(1), version());
 	}
 
 	@Test
 	void takesTheVersionOfAFileBroughtFromElsewhere() throws Exception {
 		Files.writeString(directory.resolve("settings.yml"), "_version: 4\ntimeout: 30\n");
 
-		assertEquals(4, version());
+		assertEquals(OptionalInt.of(4), version());
 	}
 
 	@Test
-	void isAtVersionZeroWithoutAFileOrWithoutTheKey() throws Exception {
-		assertEquals(0, version());
+	void knowsNothingWithoutAFileOrWithoutTheKey() throws Exception {
+		assertEquals(OptionalInt.empty(), version());
 
 		Files.writeString(directory.resolve("settings.yml"), SETTINGS);
 
-		assertEquals(0, version());
+		assertEquals(OptionalInt.empty(), version());
+	}
+
+	@Test
+	void recordsVersionZero() throws Exception {
+		apply(0, files -> {});
+
+		assertEquals(OptionalInt.of(0), version());
+		assertEquals(0, settings().path("_version").asInt());
 	}
 
 	@Test
@@ -115,7 +124,7 @@ class ConfiguraTargetTest {
 		}));
 
 		assertEquals(SETTINGS, Files.readString(directory.resolve("settings.yml")));
-		assertEquals(0, version());
+		assertEquals(OptionalInt.empty(), version());
 	}
 
 	@Test
@@ -126,7 +135,7 @@ class ConfiguraTargetTest {
 
 		assertEquals("lobby", settings.name);
 		assertEquals("lobby", settings().path("name").asText());
-		assertEquals(2, version());
+		assertEquals(OptionalInt.of(2), version());
 	}
 
 	@Test
@@ -137,7 +146,7 @@ class ConfiguraTargetTest {
 		Files.writeString(directory.resolve(".strata/journal/write/routing.yml"), "routing:\n  mode: balanced\n");
 		Files.writeString(directory.resolve(".strata/journal/delete"), "");
 
-		assertEquals(2, version());
+		assertEquals(OptionalInt.of(2), version());
 		assertEquals(30, settings().path("timeout").asInt());
 		assertTrue(Files.exists(directory.resolve("routing.yml")));
 	}
@@ -179,7 +188,7 @@ class ConfiguraTargetTest {
 		}
 	}
 
-	private int version() throws Exception {
+	private OptionalInt version() throws Exception {
 		try (MigrationSession<ConfigContext> session = target.open()) {
 			return session.version(STREAM);
 		}

@@ -1,5 +1,6 @@
 package me.whereareiam.strata.adapter.configura;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import me.whereareiam.configura.Configura;
 import me.whereareiam.strata.MigrationAction;
@@ -16,6 +17,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.util.Map;
+import java.util.OptionalInt;
 import java.util.Set;
 
 /**
@@ -53,11 +55,14 @@ final class ConfigSession implements MigrationSession<ConfigContext> {
 	}
 
 	@Override
-	public int version(@NotNull String stream) {
+	public @NotNull OptionalInt version(@NotNull String stream) {
 		target.claim(stream);
 
 		ConfigContext context = context();
-		return context.exists(versionFile) ? context.document(versionFile).path(StrataFeature.VERSION_KEY).asInt(0) : 0;
+		if (!context.exists(versionFile)) return OptionalInt.empty();
+
+		JsonNode version = context.document(versionFile).path(StrataFeature.VERSION_KEY);
+		return version.isMissingNode() ? OptionalInt.empty() : OptionalInt.of(version.asInt());
 	}
 
 	@Override

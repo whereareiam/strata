@@ -2,16 +2,20 @@ package me.whereareiam.strata;
 
 import org.jetbrains.annotations.NotNull;
 
+import java.util.OptionalInt;
+
 /**
- * Tells which version an installation without a recorded version is already at.
+ * Tells whether an installation without a recorded version is new, and if not, which version it is
+ * already at.
  * <p>
- * It is asked once per stream, the first time Strata meets a target that knows nothing about it.
- * A new installation, whose files or tables the application creates in their current form, answers
- * {@code latest} so that nothing runs. An installation that predates Strata answers the version
- * its layout corresponds to, or zero to run every migration.
+ * It is asked the first time Strata meets a target that knows nothing about the stream. A new
+ * installation answers empty: the stream's creation action, if it has one, builds the newest form,
+ * and the latest version is recorded without running a migration. An installation that predates
+ * Strata answers the version its layout corresponds to, zero to run every migration, or
+ * {@code latest} when it already has the newest layout.
  *
  * <pre>{@code
- * .baseline((database, latest) -> database.tableExists("accounts") ? 0 : latest)
+ * .baseline((database, latest) -> database.tableExists("accounts") ? OptionalInt.of(0) : OptionalInt.empty())
  * }</pre>
  *
  * @param <C> context of the target being inspected
@@ -23,8 +27,9 @@ public interface MigrationBaseline<C> {
 	 *
 	 * @param context access to the target
 	 * @param latest  highest version the stream declares
-	 * @return version between zero and {@code latest} the installation is at
+	 * @return empty for a new installation, otherwise the version between zero and {@code latest}
+	 *         the existing installation is at
 	 * @throws Exception when the installation cannot be inspected
 	 */
-	int version(@NotNull C context, int latest) throws Exception;
+	@NotNull OptionalInt version(@NotNull C context, int latest) throws Exception;
 }

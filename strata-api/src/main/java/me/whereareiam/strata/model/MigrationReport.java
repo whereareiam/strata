@@ -13,13 +13,16 @@ import java.util.Map;
  */
 @Getter
 public final class MigrationReport {
-	/** Migrations run by this upgrade, by stream id in the order the streams were upgraded. */
+	/**
+	 * Migrations run by this upgrade, by stream id in the order the streams were upgraded. A stream
+	 * created on a new installation has one entry named {@code creation} at its latest version.
+	 */
 	private final @NotNull Map<String, List<AppliedMigration>> applied;
 
 	/**
 	 * Creates a report.
 	 *
-	 * @param applied migrations run, by stream id; streams without changes are left out
+	 * @param applied migrations and creations run, by stream id; streams without changes are left out
 	 */
 	public MigrationReport(@NotNull Map<String, List<AppliedMigration>> applied) {
 		Map<String, List<AppliedMigration>> copy = new LinkedHashMap<>();
@@ -31,7 +34,7 @@ public final class MigrationReport {
 	/**
 	 * Tells whether the installation was already up to date.
 	 *
-	 * @return true when no migration ran
+	 * @return true when no migration or creation ran
 	 */
 	public boolean isEmpty() {
 		return applied.isEmpty();
