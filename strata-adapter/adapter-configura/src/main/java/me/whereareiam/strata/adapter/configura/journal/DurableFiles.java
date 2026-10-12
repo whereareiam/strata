@@ -4,7 +4,9 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.DirectoryNotEmptyException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
@@ -67,6 +69,27 @@ final class DurableFiles {
 		} catch (IOException unsupported) {
 			// Windows refuses to open a directory; its renames are durable without this.
 		}
+	}
+
+	/**
+	 * Deletes a directory that is empty and forces the removal to disk. One that holds something,
+	 * or is not there, stays as it is.
+	 */
+	static void deleteEmptyDirectory(Path directory) throws IOException {
+		if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) return;
+
+		try (Stream<Path> entries = Files.list(directory)) {
+			if (entries.findAny().isPresent()) return;
+		}
+
+		try {
+			Files.delete(directory);
+		} catch (DirectoryNotEmptyException written) {
+			// Something was written into it in the meantime; it stays.
+			return;
+		}
+
+		sync(directory.getParent());
 	}
 
 	static void deleteTree(Path root) throws IOException {

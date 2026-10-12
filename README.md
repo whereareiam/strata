@@ -143,6 +143,34 @@ A config migration names files by their path relative to the directory and value
 | `files.rename(file, pointer, targetPointer)` | Moves a value inside one file. |
 | `files.put(file, pointer, value)` / `files.remove(file, pointer)` | Sets or takes out a value. |
 | `files.delete(file)` / `files.exists(file)` | Deletes a file, or asks whether it is there. |
+| `files.moveIfAbsent(file, pointer, targetFile, targetPointer)` | Moves a value only into an empty place. When the new place holds a value already, that one stays and the moved value is dropped. |
+| `files.moveSection(file, pointer, targetFile, targetPointer)` | Merges a section into another one, value by value and down through the sections both hold; values the target holds stay. Removes the moved section and the sections above it it leaves empty. An empty pointer names the whole document. |
+| `files.moveFile(file, targetFile)` | Moves a whole file into another one the way `moveSection` merges, and deletes it. Its `_version` is not carried over. |
+| `files.removeIfEmpty(file, pointer)` | Removes a section that holds nothing, and the sections above it it leaves empty. The document itself stays. |
+| `files.removeVersion(file)` | Takes `_version` out of a file that carries one without meaning, such as one an earlier tool stamped. Never call it on another stream's version file. |
+| `files.deleteDirectoryIfEmpty(directory)` | Deletes a directory once nothing but empty directories is left in it, counting the migration's own changes. Returns false and leaves it when anything else is in it. |
+
+Pointers name keys as RFC 6901 writes them: `~` as `~0` and `/` as `~1`. Build a pointer to a key
+you read from a file with Jackson, `JsonPointer.compile("/rules").appendProperty(key).toString()`.
+
+### Migrating directories older than the version
+
+An installation sometimes has values in more than one place, because earlier builds of the
+application read them from different places or a user copied a file. The `IfAbsent`, `IfEmpty` and
+section moves treat the value at the newer place as the one that counts: they fill only empty
+places and drop what they cannot place. Each of them does nothing when there is nothing to do, so a
+migration made of them can run on a directory that is already past it and finds nothing left to
+change.
+
+```java
+.migration(3, "feature-layout", files -> {
+    files.moveFile("verification.yml", "features/verification/settings.yml");
+    files.moveSection("settings.yml", "/connection/sentinels", "features/sentinel/settings.yml", "/sentinels");
+    files.moveIfAbsent("settings.yml", "/connection/attemptTtl", "providers/providers.yml", "/behavior/attemptTtl");
+    files.removeIfEmpty("settings.yml", "/connection");
+    files.deleteDirectoryIfEmpty("providers/capabilities");
+})
+```
 
 A config target takes the file that carries the stream's version as its third argument. Strata
 writes the version there as `_version`, the first value in the file, in the same step as the
@@ -186,7 +214,7 @@ stops in between, the next start skips the copy and runs the delete.
 | --- | --- | --- |
 | PostgreSQL, SQLite | The whole migration is rolled back, schema changes included. | Same; the transaction never committed. |
 | MySQL, MariaDB, H2 | Data changes are rolled back. Schema changes stay, because these databases commit on every DDL statement. | Same. |
-| Config directory | No file changes. | Either no file changed, or the next start finishes replacing all of them. |
+| Config directory | No file changes. | Either no file changed, or the next start finishes changing all of them, deleted directories included. |
 
 A creation action behaves the same. In every case the failed migration is not recorded and runs
 again next time; migrations before it stay applied. On MySQL, MariaDB and H2, write schema migrations so that a second run succeeds, for

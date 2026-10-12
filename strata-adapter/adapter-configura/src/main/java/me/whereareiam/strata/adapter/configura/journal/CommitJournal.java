@@ -12,15 +12,17 @@ import java.util.Map;
 import java.util.stream.Stream;
 
 /**
- * Makes a change to several files all-or-nothing across a crash.
+ * Makes a change to several files and directories all-or-nothing across a crash.
  * <p>
  * The new contents are first written completely into a journal directory. Renaming that directory
  * into place is the commit: before it, no file has changed; after it, the journal is copied over the
- * files, and copied again on the next start if the process died in between.
+ * files, and copied again on the next start if the process died in between. Directories to delete
+ * go last, once the files in them are deleted; one that holds something again by then stays.
  */
 public final class CommitJournal {
 	private static final String WRITES = "write";
 	private static final String DELETIONS = "delete";
+	private static final String DIRECTORY_DELETIONS = "delete-directory";
 
 	private final Path root;
 	private final Path preparing;
@@ -43,11 +45,14 @@ public final class CommitJournal {
 	/**
 	 * Applies a set of changes as one unit.
 	 *
-	 * @param changes new content by path relative to the root; a null content deletes the file
+	 * @param changes     new content by path relative to the root; a null content deletes the file
+	 * @param directories directories to delete once the files are changed, relative to the root and
+	 *                    each before the directory holding it; one that is no longer empty by then,
+	 *                    or is already gone, is left as it is
 	 * @throws IOException when the changes cannot be journaled, in which case no file has changed, or
 	 *                     cannot be copied into place, in which case {@link #recover()} finishes them
 	 */
-	public void commit(@NotNull Map<Path, byte[]> changes) throws IOException {
+	public void commit(@NotNull Map<Path, byte[]> changes, @NotNull List<Path> directories) throws IOException {
 		DurableFiles.deleteTree(preparing);
 
 		List<String> deletions = new ArrayList<>();
@@ -58,6 +63,7 @@ public final class CommitJournal {
 		}
 
 		DurableFiles.write(preparing.resolve(DELETIONS), String.join("\n", deletions).getBytes(StandardCharsets.UTF_8));
+		DurableFiles.write(preparing.resolve(DIRECTORY_DELETIONS), lines(directories));
 		DurableFiles.move(preparing, committed);
 		DurableFiles.sync(committed.getParent());
 
@@ -84,9 +90,22 @@ public final class CommitJournal {
 		for (String file : Files.readAllLines(committed.resolve(DELETIONS)))
 			if (!file.isBlank()) Files.deleteIfExists(root.resolve(file));
 
+		// A journal left by Strata 3.1 or earlier has no list of directories.
+		Path directories = committed.resolve(DIRECTORY_DELETIONS);
+		if (Files.exists(directories))
+			for (String directory : Files.readAllLines(directories))
+				if (!directory.isBlank()) DurableFiles.deleteEmptyDirectory(root.resolve(directory));
+
 		// Once renamed, a crash while deleting can no longer be mistaken for a commit to replay.
 		DurableFiles.move(committed, finished);
 		DurableFiles.deleteTree(finished);
+	}
+
+	private static byte[] lines(List<Path> paths) {
+		List<String> lines = new ArrayList<>();
+		for (Path path : paths) lines.add(path.toString());
+
+		return String.join("\n", lines).getBytes(StandardCharsets.UTF_8);
 	}
 
 	private static List<Path> files(Path directory) throws IOException {
