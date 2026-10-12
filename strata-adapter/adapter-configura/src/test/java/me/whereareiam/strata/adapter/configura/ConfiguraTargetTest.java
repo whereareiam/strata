@@ -152,6 +152,39 @@ class ConfiguraTargetTest {
 	}
 
 	@Test
+	void movesAFileOutOfADirectoryItDeletes() throws Exception {
+		Files.writeString(directory.resolve("settings.yml"), SETTINGS);
+		Files.createDirectories(directory.resolve("providers/capabilities/recognition"));
+		Files.writeString(directory.resolve("providers/capabilities/recognition/settings.yml"), "_version: 1\nenabled: true\n");
+
+		apply(1, files -> {
+			files.moveFile("providers/capabilities/recognition/settings.yml", "features/recognition/settings.yml");
+			files.deleteDirectoryIfEmpty("providers/capabilities");
+		});
+
+		assertFalse(Files.exists(directory.resolve("providers/capabilities")));
+		assertTrue(Files.isDirectory(directory.resolve("providers")));
+		JsonNode moved = configura.readNode(directory.resolve("features/recognition/settings.yml"));
+		assertTrue(moved.path("enabled").asBoolean());
+		assertFalse(moved.has("_version"));
+		assertTrue(Files.exists(directory.resolve(".strata/backup/plugin.config/v1/providers/capabilities/recognition/settings.yml")));
+		assertEquals(OptionalInt.of(1), version());
+	}
+
+	@Test
+	void finishesDeletingADirectoryOfAnInterruptedCommit() throws Exception {
+		Files.writeString(directory.resolve("settings.yml"), SETTINGS);
+		Files.createDirectories(directory.resolve("verification"));
+		Files.createDirectories(directory.resolve(".strata/journal/write"));
+		Files.writeString(directory.resolve(".strata/journal/write/settings.yml"), "_version: 1\nname: lobby\n");
+		Files.writeString(directory.resolve(".strata/journal/delete"), "verification/settings.yml");
+		Files.writeString(directory.resolve(".strata/journal/delete-directory"), "verification");
+
+		assertEquals(OptionalInt.of(1), version());
+		assertFalse(Files.exists(directory.resolve("verification")));
+	}
+
+	@Test
 	void carriesTheVersionOfOneStreamOnly() throws Exception {
 		apply(1, files -> {});
 

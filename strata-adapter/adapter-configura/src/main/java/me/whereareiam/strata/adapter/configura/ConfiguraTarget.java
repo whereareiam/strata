@@ -18,10 +18,10 @@ import java.nio.file.Path;
  * top, so it stays with the configuration when a user copies or restores it. {@link StrataFeature}
  * keeps Configura from dropping it when the application rewrites that file.
  * <p>
- * All files a migration changes are replaced together; if the process dies halfway, the next start
- * completes the replacement. The directory's {@code .strata} folder holds only working state and
- * {@code backup/<stream>/v<version>/}, every file as it was before the migration to that version
- * changed it. Deleting the folder loses nothing Strata needs.
+ * All files a migration changes, and the directories it deletes, are changed together; if the
+ * process dies halfway, the next start completes the change. The directory's {@code .strata} folder
+ * holds only working state and {@code backup/<stream>/v<version>/}, every file as it was before the
+ * migration to that version changed it. Deleting the folder loses nothing Strata needs.
  */
 public final class ConfiguraTarget implements MigrationTarget<ConfigContext> {
 	private final Configura configura;

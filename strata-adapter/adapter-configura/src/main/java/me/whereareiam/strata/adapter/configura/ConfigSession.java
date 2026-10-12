@@ -79,7 +79,7 @@ final class ConfigSession implements MigrationSession<ConfigContext> {
 
 		Map<Path, byte[]> changes = context.changes();
 		backUp(stream, entry.getVersion(), changes.keySet());
-		journal.commit(changes);
+		journal.commit(changes, context.deletedDirectories());
 	}
 
 	@Override

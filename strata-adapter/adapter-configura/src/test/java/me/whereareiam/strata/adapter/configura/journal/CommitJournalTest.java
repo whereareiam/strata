@@ -15,6 +15,7 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CommitJournalTest {
 	@TempDir
@@ -38,7 +39,7 @@ class CommitJournalTest {
 		changes.put(Path.of("features", "routing.yml"), bytes("created"));
 		changes.put(Path.of("legacy.yml"), null);
 
-		journal.commit(changes);
+		journal.commit(changes, List.of());
 
 		assertEquals("new", Files.readString(root.resolve("settings.yml")));
 		assertEquals("created", Files.readString(root.resolve("features/routing.yml")));
@@ -84,6 +85,75 @@ class CommitJournalTest {
 		journal.recover();
 
 		assertEquals("edited since", Files.readString(root.resolve("settings.yml")));
+		assertEquals(List.of(), leftovers());
+	}
+
+	@Test
+	void deletesEmptyDirectoriesAfterTheFilesInThem() throws IOException {
+		Files.createDirectories(root.resolve("providers/capabilities/recognition"));
+		Files.writeString(root.resolve("providers/capabilities/recognition/settings.yml"), "old");
+		Map<Path, byte[]> changes = new LinkedHashMap<>();
+		changes.put(Path.of("features", "recognition", "settings.yml"), bytes("moved"));
+		changes.put(Path.of("providers", "capabilities", "recognition", "settings.yml"), null);
+
+		journal.commit(changes, List.of(Path.of("providers", "capabilities", "recognition"), Path.of("providers", "capabilities")));
+
+		assertEquals("moved", Files.readString(root.resolve("features/recognition/settings.yml")));
+		assertFalse(Files.exists(root.resolve("providers/capabilities")));
+		assertTrue(Files.isDirectory(root.resolve("providers")));
+		assertEquals(List.of(), leftovers());
+	}
+
+	@Test
+	void keepsADirectoryThatIsNoLongerEmptyOrAlreadyGone() throws IOException {
+		Files.createDirectories(root.resolve("legacy"));
+		Files.writeString(root.resolve("legacy/notes.txt"), "kept");
+
+		journal.commit(Map.of(), List.of(Path.of("legacy"), Path.of("missing")));
+
+		assertEquals("kept", Files.readString(root.resolve("legacy/notes.txt")));
+		assertFalse(Files.exists(root.resolve("missing")));
+		assertEquals(List.of(), leftovers());
+	}
+
+	@Test
+	void finishesDeletingDirectoriesOfACommitInterruptedAfterItTookEffect() throws IOException {
+		Files.createDirectories(root.resolve("verification"));
+		Files.writeString(root.resolve("verification/settings.yml"), "old");
+		Files.createDirectories(state.resolve("journal/write/features/verification"));
+		Files.writeString(state.resolve("journal/write/features/verification/settings.yml"), "moved");
+		Files.writeString(state.resolve("journal/delete"), "verification/settings.yml");
+		Files.writeString(state.resolve("journal/delete-directory"), "verification");
+
+		journal.recover();
+
+		assertEquals("moved", Files.readString(root.resolve("features/verification/settings.yml")));
+		assertFalse(Files.exists(root.resolve("verification")));
+		assertEquals(List.of(), leftovers());
+	}
+
+	@Test
+	void finishesACommitInterruptedWhileDeletingDirectories() throws IOException {
+		Files.createDirectories(root.resolve("providers/capabilities"));
+		Files.createDirectories(state.resolve("journal/write"));
+		Files.writeString(state.resolve("journal/delete"), "providers/capabilities/recognition/settings.yml");
+		Files.writeString(state.resolve("journal/delete-directory"), "providers/capabilities/recognition\nproviders/capabilities");
+
+		journal.recover();
+
+		assertFalse(Files.exists(root.resolve("providers/capabilities")));
+		assertEquals(List.of(), leftovers());
+	}
+
+	@Test
+	void replaysAJournalWithoutDirectories() throws IOException {
+		Files.createDirectories(state.resolve("journal/write"));
+		Files.writeString(state.resolve("journal/write/settings.yml"), "new");
+		Files.writeString(state.resolve("journal/delete"), "");
+
+		journal.recover();
+
+		assertEquals("new", Files.readString(root.resolve("settings.yml")));
 		assertEquals(List.of(), leftovers());
 	}
 
