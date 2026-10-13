@@ -2,7 +2,7 @@
 lombok = "1.18.42"
 annotations = "26.0.2"
 junit = "6.0.1"
-jdbi = "3.50.0"
+jdbi = "3.55.0"
 configura = "2.0.0"
 dialectica = "4.0.0"
 h2 = "2.4.240"
