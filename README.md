@@ -272,8 +272,8 @@ databases you support.
 
 ```kotlin
 implementation("me.whereareiam:strata-adapter-database-dialectica:3.0.0")
-implementation("me.whereareiam:dialectica-bundle:3.0.0")             // every dialect, or one per database:
-// implementation("me.whereareiam:dialectica-dialect-postgresql:3.0.0")
+implementation("me.whereareiam:dialectica-bundle:4.0.0")             // every dialect, or one per database:
+// implementation("me.whereareiam:dialectica-dialect-postgresql:4.0.0")
 ```
 
 ```java
